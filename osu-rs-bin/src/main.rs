@@ -29,7 +29,7 @@ fn read_beatmap(filename: impl AsRef<Path>) -> osu_rs::Beatmap<'static> {
     }
 }
 
-fn parse_beatmap(text: &str) -> osu_rs::Beatmap<'static> {
+fn parse_beatmap(text: &str) -> osu_rs::Beatmap {
     match osu_rs::Beatmap::parse_str(text) {
         Ok(beatmap) => beatmap,
         Err(err) => {

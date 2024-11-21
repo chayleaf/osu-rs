@@ -1,6 +1,6 @@
 [package]
 name = "osu-rs"
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 readme = "README.md"
 authors.workspace = true
@@ -14,7 +14,6 @@ categories = ["parser-implementations"]
 members = ["osu-rs-derive", "osu-rs-bin"]
 
 [workspace.package]
-version = "0.1.0"
 edition = "2021"
 authors = ["chayleaf <chayleaf-cratesio@pavluk.org>"]
 repository = "https://github.com/chayleaf/osu-rs/"

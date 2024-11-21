@@ -680,7 +680,7 @@ impl Beatmap<'static> {
         };
         let version = if line_buf.starts_with("osu file format") {
             let line = line_buf.trim_end_matches(|x| matches!(x, '\n' | '\r'));
-            let line = Borrowed(line, Span::new(pos, pos + line.len()));
+            let line = Lended(line, Span::new(pos, pos + line.len()));
             let version = line.split('v').last().unwrap();
             i32::parse_field("version", &ctx, version)?
         } else {
@@ -750,8 +750,10 @@ impl Beatmap<'static> {
         }
         Ok(ret)
     }
-    pub fn parse_str(data: &str) -> Result<Self, ParseError> {
-        let mut line_buf = String::new();
+}
+
+impl<'a> Beatmap<'a> {
+    pub fn parse_str(data: &'a str) -> Result<Self, ParseError> {
         let mut pos = 0;
         let mut next_pos = memchr::memchr(b'\n', data.as_bytes())
             .map(|x| x + pos + 1)
@@ -759,8 +761,8 @@ impl Beatmap<'static> {
         let mut ctx = Context {
             version: Self::DEFAULT_VERSION,
         };
-        let version = if line_buf.starts_with("osu file format") {
-            let line = line_buf.trim_end_matches(|x| matches!(x, '\n' | '\r'));
+        let version = if data[..next_pos].starts_with("osu file format") {
+            let line = data[..next_pos].trim_end_matches(|x| matches!(x, '\n' | '\r'));
             let line = Borrowed(line, Span::new(pos, pos + line.len()));
             let version = line.split('v').last().unwrap();
             i32::parse_field("version", &ctx, version)?
@@ -796,7 +798,7 @@ impl Beatmap<'static> {
             }
 
             if !skip {
-                let line = Lended(line, Span::new(pos, pos + line.len()));
+                let line = Borrowed(line, Span::new(pos, pos + line.len()));
 
                 let mut current = section;
                 while let Some(section) = current {
@@ -814,7 +816,6 @@ impl Beatmap<'static> {
                 }
             }
 
-            line_buf.clear();
             pos = next_pos;
             next_pos = memchr::memchr(b'\n', data[pos..].as_bytes())
                 .map(|x| x + pos + 1)
