@@ -1,0 +1,8 @@
+[package]
+name = "osu-rs-bin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ariadne = { version = "0.5.0", features = ["auto-color"] }
+osu-rs = { path = "../" }
