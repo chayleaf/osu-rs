@@ -7,13 +7,11 @@ I have no idea what other osu! file format parsers there are, but this
 one is mine!
 
 The focus here was on performance so I tried to do 0-alloc
-deserialization where possible. Only rudimentary .osu file reading is
-supported for now (this means you can't read storyboards, but can
-hopefully read literally anything else, even though I haven't tested
-much). Additionally, I use spanned strings instead of normal strings
-everywhere, so you get free error reporting as a bonus.
-
-Serialization also works, but only for the current format version.
+deserialization where possible. I've tested roundtrips on a lot of
+beatmaps with different format versions so I'm reasonably sure this
+should cover most of them (roundtrips aren't byte-by-byte perfect all of
+the time because there's lots of leeway, but it's reasonably close at
+least).
 
 Sorry for having very sparse documentation, I'll improve it later...
 hopefully

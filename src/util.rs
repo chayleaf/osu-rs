@@ -4,11 +4,12 @@ use crate::Span;
 
 pub trait StaticCow<'a>: Copy + Clone + Sized + Borrow<str> + AsRef<str> {
     fn span(&self) -> Span;
-    fn into_a_cow(self) -> Cow<'a, str>;
+    fn into_cow(self) -> Cow<'a, str>;
     fn split(&self, p: char) -> impl Iterator<Item = Self>;
     fn split_once(&self, p: char) -> Option<(Self, Self)>;
     fn trim(&self) -> Self;
     fn trim_matches(&self, c: char) -> Self;
+    fn trim_matches2(&self, c1: char, c2: char) -> Self;
 }
 
 #[derive(Copy, Clone)]
@@ -17,7 +18,7 @@ impl<'a> StaticCow<'a> for Lended<'_> {
     fn span(&self) -> Span {
         self.1
     }
-    fn into_a_cow(self) -> Cow<'a, str> {
+    fn into_cow(self) -> Cow<'a, str> {
         Cow::Owned(Cow::Borrowed(self.0).into_owned())
     }
     fn split(&self, p: char) -> impl Iterator<Item = Self> {
@@ -52,6 +53,14 @@ impl<'a> StaticCow<'a> for Lended<'_> {
         span.end = span.start + value.len();
         Self(value, span)
     }
+    fn trim_matches2(&self, c1: char, c2: char) -> Self {
+        let mut span = self.1;
+        let value = self.0.trim_start_matches(|x| x == c1 || x == c2);
+        span.start = span.end - value.len();
+        let value = value.trim_end_matches(|x| x == c1 || x == c2);
+        span.end = span.start + value.len();
+        Self(value, span)
+    }
 }
 
 impl AsRef<str> for Lended<'_> {
@@ -72,7 +81,7 @@ impl<'a> StaticCow<'a> for Borrowed<'a> {
     fn span(&self) -> Span {
         self.1
     }
-    fn into_a_cow(self) -> Cow<'a, str> {
+    fn into_cow(self) -> Cow<'a, str> {
         Cow::Borrowed(self.0)
     }
     fn split(&self, p: char) -> impl Iterator<Item = Self> {
@@ -104,6 +113,14 @@ impl<'a> StaticCow<'a> for Borrowed<'a> {
         let value = self.0.trim_start_matches(c);
         span.start = span.end - value.len();
         let value = value.trim_end_matches(c);
+        span.end = span.start + value.len();
+        Self(value, span)
+    }
+    fn trim_matches2(&self, c1: char, c2: char) -> Self {
+        let mut span = self.1;
+        let value = self.0.trim_start_matches(|x| x == c1 || x == c2);
+        span.start = span.end - value.len();
+        let value = value.trim_end_matches(|x| x == c1 || x == c2);
         span.end = span.start + value.len();
         Self(value, span)
     }

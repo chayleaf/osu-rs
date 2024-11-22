@@ -1,10 +1,14 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    ops::{Add, Sub},
+};
 
 use thiserror::Error;
 
 use crate::{
-    BeatmapSection, Context, FullHitSound, HitObject, HitObjectFlags, HitObjectKind, HitSound,
-    SampleSet, SliderKind, SoundTypes, Span, StaticCow, TimingPoint, TimingPointFlags,
+    BeatmapSection, Context, EventSampleSet, EventTrigger, FullHitSound, HitObject, HitObjectFlags,
+    HitObjectKind, HitSound, SampleSet, SliderKind, SoundType, SoundTypes, Span, StaticCow, Time,
+    TimingPoint, TimingPointFlags,
 };
 
 pub trait ParseField<'a>: Sized {
@@ -42,6 +46,21 @@ impl<'a, T: ParseField<'a>> BeatmapSection<'a> for Vec<T> {
     ) -> Result<Option<crate::Section>, ParseError> {
         self.push(ParseField::parse_field("", ctx, line)?);
         Ok(None)
+    }
+}
+
+impl<'a, T: Copy + Clone + From<i8> + Add<T, Output = T> + Sub<T, Output = T> + ParseField<'a>>
+    ParseField<'a> for Time<T>
+{
+    fn parse_field(
+        name: impl Into<Cow<'static, str>>,
+        ctx: &Context,
+        line: impl StaticCow<'a>,
+    ) -> Result<Self, ParseError> {
+        Ok(Self::new(
+            ParseField::parse_field(name, ctx, line)?,
+            ctx.version,
+        ))
     }
 }
 
@@ -84,15 +103,15 @@ impl<'a> ParseField<'a> for TimingPoint {
     ) -> Result<Self, ParseError> {
         let mut end_span = line.span();
         end_span.start = end_span.end;
-        let (offset, s) = line
-            .split_once(',')
+        let mut s = line.split(',');
+        let offset = s
+            .next()
             .ok_or(InvalidTimingPoint)
-            .map_err(ParseError::curry("timing point", end_span))?;
-        let (beat_length, s) = if let Some((a, b)) = s.split_once(',') {
-            (a, Some(b))
-        } else {
-            (s, None)
-        };
+            .map_err(ParseError::curry("timing point offset", end_span))?;
+        let beat_length = s
+            .next()
+            .ok_or(InvalidTimingPoint)
+            .map_err(ParseError::curry("timing point beat length", end_span))?;
         let mut ret = TimingPoint {
             offset: ParseField::parse_field("timing point offset", ctx, offset)?,
             beat_length: ParseField::parse_field("timing point beat length", ctx, beat_length)?,
@@ -103,25 +122,15 @@ impl<'a> ParseField<'a> for TimingPoint {
             changes_timing: true,
             flags: TimingPointFlags::empty(),
         };
-        let Some(s) = s else {
+        let Some(time_signature) = s.next() else {
             return Ok(ret);
-        };
-        let (time_signature, s) = if let Some((a, b)) = s.split_once(',') {
-            (a, Some(b))
-        } else {
-            (s, None)
         };
         if !time_signature.as_ref().starts_with('0') {
             ret.time_signature =
                 ParseField::parse_field("timing point time signature", ctx, time_signature)?;
         }
-        let Some(s) = s else {
+        let Some(sample_set) = s.next() else {
             return Ok(ret);
-        };
-        let (sample_set, s) = if let Some((a, b)) = s.split_once(',') {
-            (a, Some(b))
-        } else {
-            (s, None)
         };
         ret.sample_set = Some(
             i32::parse_field("timing point sample set", ctx, sample_set)?
@@ -131,42 +140,22 @@ impl<'a> ParseField<'a> for TimingPoint {
                     sample_set.span(),
                 ))?,
         );
-        let Some(s) = s else {
+        let Some(custom_sample_index) = s.next() else {
             return Ok(ret);
-        };
-        let (custom_sample_index, s) = if let Some((a, b)) = s.split_once(',') {
-            (a, Some(b))
-        } else {
-            (s, None)
         };
         ret.custom_sample_index =
             ParseField::parse_field("timing point sample index", ctx, custom_sample_index)?;
-        let Some(s) = s else {
+        let Some(sample_volume) = s.next() else {
             return Ok(ret);
-        };
-        let (sample_volume, s) = if let Some((a, b)) = s.split_once(',') {
-            (a, Some(b))
-        } else {
-            (s, None)
         };
         ret.sample_volume =
             ParseField::parse_field("timing point sample volume", ctx, sample_volume)?;
-        let Some(s) = s else {
+        let Some(changes_timing) = s.next() else {
             return Ok(ret);
-        };
-        let (changes_timing, s) = if let Some((a, b)) = s.split_once(',') {
-            (a, Some(b))
-        } else {
-            (s, None)
         };
         ret.changes_timing = ParseField::parse_field("timing point type", ctx, changes_timing)?;
-        let Some(s) = s else {
+        let Some(flags) = s.next() else {
             return Ok(ret);
-        };
-        let (flags, _s) = if let Some((a, b)) = s.split_once(',') {
-            (a, Some(b))
-        } else {
-            (s, None)
         };
         ret.flags = ParseField::parse_field("timing point flags", ctx, flags)?;
         Ok(ret)
@@ -181,53 +170,47 @@ impl<'a> ParseField<'a> for HitObject<'a> {
     ) -> Result<Self, ParseError> {
         let mut end_span = line.span();
         end_span.start = end_span.end;
-        let s = line;
-        let (x, s) = s
-            .split_once(',')
+        let mut s = line.split(',');
+        let x = s
+            .next()
             .ok_or(InvalidHitObject)
-            .map_err(ParseError::curry("hit object y", end_span))?;
+            .map_err(ParseError::curry("hit object x", end_span))?;
         let x = f64::parse_field("hit object x", ctx, x)?;
         let x = x as i32;
-        let (y, s) = s
-            .split_once(',')
+        let y = s
+            .next()
             .ok_or(InvalidHitObject)
-            .map_err(ParseError::curry("hit object time", end_span))?;
+            .map_err(ParseError::curry("hit object y", end_span))?;
         let y = f64::parse_field("hit object y", ctx, y)?;
         let y = y as i32;
-        let (time, s) = s
-            .split_once(',')
+        let time = s
+            .next()
             .ok_or(InvalidHitObject)
             .map_err(ParseError::curry("hit object time", end_span))?;
         let time = f64::parse_field("hit object time", ctx, time)?;
         let time = time as i32;
-        let (kind, s) = s
-            .split_once(',')
+        let kind = s
+            .next()
             .ok_or(InvalidHitObject)
-            .map_err(ParseError::curry("hit object sound", end_span))?;
+            .map_err(ParseError::curry("hit object type", end_span))?;
         let type_span = kind.span();
         let kind = i32::parse_field("hit object type", ctx, kind)?;
         let kind = HitObjectFlags::from_bits_retain(kind);
-        let (sound, s) = if let Some((a, b)) = s.split_once(',') {
-            (a, Some(b))
-        } else {
-            (s, None)
-        };
+        let sound = s
+            .next()
+            .ok_or(InvalidHitObject)
+            .map_err(ParseError::curry("hit object sound", end_span))?;
         let sound = i32::parse_field("hit object sound", ctx, sound)?;
         let sound = SoundTypes::from_bits_retain(sound);
         let combo_start = kind.contains(HitObjectFlags::COMBO_START);
         let combo_colour_skip = (kind & HitObjectFlags::COMBO_COLOUR_OFFSET_MASK).bits() >> 4;
-        let (kind, s) = if kind.contains(HitObjectFlags::CIRCLE) {
-            (HitObjectKind::Circle, s)
+        let (kind, extra) = if kind.contains(HitObjectFlags::CIRCLE) {
+            (HitObjectKind::Circle, s.next())
         } else if kind.contains(HitObjectFlags::SLIDER) {
-            let Some(s) = s else {
-                return Err(ParseError::curry("slider points", end_span)(
-                    InvalidHitObject,
-                ));
-            };
-            let (points, s) = s
-                .split_once(',')
+            let points = s
+                .next()
                 .ok_or(InvalidHitObject)
-                .map_err(ParseError::curry("slider slide count", end_span))?;
+                .map_err(ParseError::curry("slider points", end_span))?;
             let mut kind = SliderKind::Catmull;
             let mut curve_points = Vec::new();
             for point in points.split('|') {
@@ -237,7 +220,7 @@ impl<'a> ParseField<'a> for HitObject<'a> {
                     continue;
                 }
                 let (x, y) = point
-                    .split_once(',')
+                    .split_once(':')
                     .ok_or(InvalidHitObject)
                     .map_err(ParseError::curry("slider point coordinates", point.span()))?;
                 let x = f64::parse_field("slider point x", ctx, x)?;
@@ -246,25 +229,17 @@ impl<'a> ParseField<'a> for HitObject<'a> {
                 let y = y as i32;
                 curve_points.push((x, y));
             }
-            let (slide_count, s) = s
-                .split_once(',')
-                .map(|(a, b)| (a, Some(b)))
-                .unwrap_or((s, None));
-            let (length, s) = if let Some(s) = s {
-                let (length, s) = s
-                    .split_once(',')
-                    .map(|(a, b)| (a, Some(b)))
-                    .unwrap_or((s, None));
-                let length = ParseField::parse_field("slider length", ctx, length)?;
-                (length, s)
+            let slide_count = s
+                .next()
+                .ok_or(InvalidHitObject)
+                .map_err(ParseError::curry("slider slide count", end_span))?;
+            let slide_count = i32::parse_field("slider slide count", ctx, slide_count)?;
+            let length = if let Some(length) = s.next() {
+                ParseField::parse_field("slider length", ctx, length)?
             } else {
-                (0., s)
+                0.
             };
-            let (mut edge_sounds, s) = if let Some(s) = s {
-                let (edge_sounds, s) = s
-                    .split_once(',')
-                    .map(|(a, b)| (a, Some(b)))
-                    .unwrap_or((s, None));
+            let mut edge_sounds = if let Some(edge_sounds) = s.next() {
                 let mut sounds = vec![];
                 if !edge_sounds.as_ref().is_empty() {
                     for sound in edge_sounds.split('|') {
@@ -279,15 +254,11 @@ impl<'a> ParseField<'a> for HitObject<'a> {
                         });
                     }
                 }
-                (sounds, s)
+                sounds
             } else {
-                (vec![], s)
+                vec![]
             };
-            let s = if let Some(s) = s {
-                let (edge_samples, s) = s
-                    .split_once(',')
-                    .map(|(a, b)| (a, Some(b)))
-                    .unwrap_or((s, None));
+            if let Some(edge_samples) = s.next() {
                 if !edge_samples.as_ref().is_empty() {
                     for (i, sound) in edge_samples.split('|').enumerate() {
                         let (sample, addition) = sound
@@ -321,11 +292,7 @@ impl<'a> ParseField<'a> for HitObject<'a> {
                         }
                     }
                 }
-                s
-            } else {
-                s
-            };
-            let slide_count = i32::parse_field("slider slide count", ctx, slide_count)?;
+            }
             (
                 HitObjectKind::Slider {
                     kind,
@@ -334,33 +301,26 @@ impl<'a> ParseField<'a> for HitObject<'a> {
                     edge_sounds,
                     slide_count,
                 },
-                s,
+                s.next(),
             )
         } else if kind.contains(HitObjectFlags::SPINNER) {
-            let Some(s) = s else {
-                return Err(ParseError::curry("spinner end time", end_span)(
-                    InvalidHitObject,
-                ));
-            };
-            let (end_time, s) = s
-                .split_once(',')
-                .map(|(a, b)| (a, Some(b)))
-                .unwrap_or((s, None));
+            let end_time = s
+                .next()
+                .ok_or(InvalidHitObject)
+                .map_err(ParseError::curry("spinner end time", end_span))?;
             let end_time = i32::parse_field("spinner end time", ctx, end_time)?;
-            (HitObjectKind::Spinner { end_time }, s)
+            (HitObjectKind::Spinner { end_time }, s.next())
         } else if kind.contains(HitObjectFlags::HOLD_NOTE) {
-            let Some(s) = s else {
-                return Err(ParseError::curry("hold note end time", end_span)(
-                    InvalidHitObject,
-                ));
-            };
-            // the : is NOT a typo
-            let (end_time, s) = s
+            let end_time_and_extra = s
+                .next()
+                .ok_or(InvalidHitObject)
+                .map_err(ParseError::curry("hold note end time", end_span))?;
+            let (end_time, extra) = end_time_and_extra
                 .split_once(':')
                 .map(|(a, b)| (a, Some(b)))
-                .unwrap_or((s, None));
+                .unwrap_or((end_time_and_extra, None));
             let end_time = i32::parse_field("hold note end time", ctx, end_time)?;
-            (HitObjectKind::HoldNote { end_time }, s)
+            (HitObjectKind::HoldNote { end_time }, extra)
         } else {
             return Err(ParseError::curry("hit object type", type_span)(
                 InvalidHitObject,
@@ -376,21 +336,19 @@ impl<'a> ParseField<'a> for HitObject<'a> {
             volume: 0,
             sample_file: "".into(),
         };
-        if let Some(s) = s {
-            let (sample, s) =
-                s.split_once(':')
-                    .ok_or(InvalidHitObject)
-                    .map_err(ParseError::curry(
-                        "hit object sample addition set",
-                        end_span,
-                    ))?;
+        if let Some(extra) = extra.filter(|x| !x.as_ref().is_empty()) {
+            let mut s = extra.split(':');
+            let sample = s
+                .next()
+                .ok_or(InvalidHitObject)
+                .map_err(ParseError::curry("hit object sample set", end_span))?;
             hit_sound.hit_sound.sample_set =
                 SampleSet::try_from(i32::parse_field("hit object sample set", ctx, sample)?)
                     .map_err(ParseError::curry("hit object sample set", sample.span()))?;
-            let (addition, s) = s
-                .split_once(':')
-                .map(|(a, b)| (a, Some(b)))
-                .unwrap_or((s, None));
+            let addition = s.next().ok_or(InvalidHitObject).map_err(ParseError::curry(
+                "hit object sample addition set",
+                end_span,
+            ))?;
             hit_sound.hit_sound.addition_set = SampleSet::try_from(i32::parse_field(
                 "hit object sample addition set",
                 ctx,
@@ -400,38 +358,17 @@ impl<'a> ParseField<'a> for HitObject<'a> {
                 "hit object sample addition set",
                 addition.span(),
             ))?;
-            let s = if let Some(s) = s {
-                let (custom, s) = s
-                    .split_once(':')
-                    .map(|(a, b)| (a, Some(b)))
-                    .unwrap_or((s, None));
+            if let Some(custom) = s.next() {
                 hit_sound.custom_sample_index =
                     i32::parse_field("hit object custom sample index", ctx, custom)?;
-                s
-            } else {
-                s
-            };
-            let s = if let Some(s) = s {
-                let (volume, s) = s
-                    .split_once(':')
-                    .map(|(a, b)| (a, Some(b)))
-                    .unwrap_or((s, None));
+            }
+            if let Some(volume) = s.next() {
                 let volume = i32::parse_field("hit object sample volume", ctx, volume)?;
                 hit_sound.volume = volume;
-                s
-            } else {
-                s
-            };
-            let _s = if let Some(s) = s {
-                let (sample_file, s) = s
-                    .split_once(':')
-                    .map(|(a, b)| (a, Some(b)))
-                    .unwrap_or((s, None));
-                hit_sound.sample_file = sample_file.into_a_cow();
-                s
-            } else {
-                s
-            };
+            }
+            if let Some(sample_file) = s.next() {
+                hit_sound.sample_file = sample_file.into_cow();
+            }
         }
         Ok(Self {
             x,
@@ -445,13 +382,109 @@ impl<'a> ParseField<'a> for HitObject<'a> {
     }
 }
 
+impl<'a> ParseField<'a> for EventTrigger {
+    fn parse_field(
+        name: impl Into<Cow<'static, str>>,
+        _ctx: &Context,
+        line: impl StaticCow<'a>,
+    ) -> Result<Self, ParseError> {
+        match line.as_ref() {
+            "Passing" => Ok(Self::Passing),
+            "Failing" => Ok(Self::Failing),
+            "HitObjectHit" => Ok(Self::HitObjectHit),
+            _ => {
+                if let Some(s) = line.as_ref().strip_prefix("HitSound") {
+                    let (set, s) = if let Some(s) = s.strip_prefix("All") {
+                        (Some(EventSampleSet::All), s)
+                    } else if let Some(s) = s.strip_prefix("Normal") {
+                        (Some(EventSampleSet::Normal), s)
+                    } else if let Some(s) = s.strip_prefix("Soft") {
+                        (Some(EventSampleSet::Soft), s)
+                    } else if let Some(s) = s.strip_prefix("Drum") {
+                        (Some(EventSampleSet::Drum), s)
+                    } else {
+                        (None, s)
+                    };
+                    let (sample_set, addition_set, s) = if let Some(set) = set {
+                        let (add, s) = if let Some(s) = s.strip_prefix("All") {
+                            (Some(EventSampleSet::All), s)
+                        } else if let Some(s) = s.strip_prefix("Normal") {
+                            (Some(EventSampleSet::Normal), s)
+                        } else if let Some(s) = s.strip_prefix("Soft") {
+                            (Some(EventSampleSet::Soft), s)
+                        } else if let Some(s) = s.strip_prefix("Drum") {
+                            (Some(EventSampleSet::Drum), s)
+                        } else {
+                            (None, s)
+                        };
+                        (Some(set), add, s)
+                    } else {
+                        (None, None, s)
+                    };
+                    let (sound, s) = if let Some(s) = s.strip_prefix("Whistle") {
+                        (Some(SoundType::Whistle), s)
+                    } else if let Some(s) = s.strip_prefix("Finish") {
+                        (Some(SoundType::Finish), s)
+                    } else if let Some(s) = s.strip_prefix("Clap") {
+                        (Some(SoundType::Clap), s)
+                    } else {
+                        (None, s)
+                    };
+                    let custom_sample_index = s.parse().ok();
+                    Ok(Self::HitSound {
+                        sample_set,
+                        addition_set,
+                        sound,
+                        custom_sample_index,
+                    })
+                } else {
+                    Err(ParseError::curry(name, line.span())(InvalidEventCommand))
+                }
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for EventTrigger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Passing => f.write_str("Passing"),
+            Self::Failing => f.write_str("Failing"),
+            Self::HitObjectHit => f.write_str("HitObjectHit"),
+            Self::HitSound {
+                sample_set,
+                addition_set,
+                sound,
+                custom_sample_index,
+            } => {
+                let sample_set = if addition_set.is_some() {
+                    Some(sample_set.unwrap_or_default())
+                } else {
+                    *sample_set
+                };
+                f.write_str("HitSound")?;
+                for set in [sample_set, *addition_set].into_iter().flatten() {
+                    write!(f, "{set}")?;
+                }
+                if let Some(sound) = sound {
+                    write!(f, "{sound}")?;
+                }
+                if let Some(idx) = custom_sample_index {
+                    write!(f, "{idx}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 impl<'a> ParseField<'a> for Cow<'a, str> {
     fn parse_field(
         _name: impl Into<Cow<'static, str>>,
         _ctx: &Context,
         line: impl StaticCow<'a>,
     ) -> Result<Self, ParseError> {
-        Ok(line.into_a_cow())
+        Ok(line.into_cow())
     }
 }
 
@@ -596,6 +629,15 @@ impl std::fmt::Display for InvalidEvent {
 }
 
 #[derive(Debug, Error)]
+pub struct InvalidEventCommand;
+
+impl std::fmt::Display for InvalidEventCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("invalid event command")
+    }
+}
+
+#[derive(Debug, Error)]
 pub enum ParseErrorReason {
     #[error("{0}")]
     Bool(
@@ -626,6 +668,12 @@ pub enum ParseErrorReason {
         #[from]
         #[source]
         InvalidEvent,
+    ),
+    #[error("{0}")]
+    InvalidEventCommand(
+        #[from]
+        #[source]
+        InvalidEventCommand,
     ),
     #[error("{0}")]
     Int(

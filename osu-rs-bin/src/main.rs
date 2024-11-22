@@ -64,7 +64,7 @@ fn main() {
         }
         "verify" => {
             let dir = std::env::args_os().nth(2).expect("expected dir");
-            for entry in std::fs::read_dir(dir).unwrap() {
+            for entry in walkdir::WalkDir::new(dir) {
                 let entry = entry.unwrap();
                 if entry
                     .path()
