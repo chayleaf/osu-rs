@@ -86,7 +86,7 @@ pub enum GameMode {
 
 /// Time in milliseconds
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Time<T>(T);
+pub struct Time<T>(pub T);
 
 impl<T: Copy + Clone + From<i8> + Add<T, Output = T> + Sub<T, Output = T>> Time<T> {
     pub fn new(time: T, version: i32) -> Self {
