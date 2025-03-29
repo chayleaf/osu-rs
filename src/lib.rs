@@ -288,8 +288,8 @@ impl<'a> BeatmapSection<'a> for Colours<'a> {
                 .ok_or(InvalidColour)
                 .map_err(ParseError::curry("colour", end_span))?;
             let r = ParseField::parse_field("red colour channel", ctx, r)?;
-            let g = ParseField::parse_field("red colour channel", ctx, g)?;
-            let b = ParseField::parse_field("red colour channel", ctx, b)?;
+            let g = ParseField::parse_field("green colour channel", ctx, g)?;
+            let b = ParseField::parse_field("blue colour channel", ctx, b)?;
             self.colours.push((key.into_cow(), (r, g, b)));
         }
         Ok(None)
