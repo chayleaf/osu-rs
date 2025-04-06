@@ -22,6 +22,6 @@ license = "MIT"
 
 [dependencies]
 thiserror = "2.0.3"
-osu-rs-derive = { version = "0.1.0", path = "./osu-rs-derive" }
+osu-rs-derive = { version = "0.2.0", path = "./osu-rs-derive" }
 bitflags = "2.6.0"
 memchr = "2.7.4"

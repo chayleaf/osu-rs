@@ -351,6 +351,9 @@ mod test {
             ("SliderStyle", "1"),
             ("Version", "latest"),
             ("CustomComboBurstSounds", "1,2,3"),
+            ("HitCircleOverlayAboveNumer", "0"),
+            ("SpinnerFrequencyModulate", "fALSe"),
+            ("SpinnerFadePlayfield", "tRUe"),
         ] {
             general
                 .consume_line(
@@ -364,6 +367,9 @@ mod test {
         assert_eq!(general.author, "test");
         assert_eq!(general.slider_style, SliderStyle::PeppySliders);
         assert_eq!(general.version, None);
+        assert!(!general.hit_circle_overlay_above_number);
+        assert!(!general.spinner_frequency_modulate);
+        assert!(general.spinner_fade_playfield);
         assert_eq!(general.custom_combo_burst_sounds, &[1, 2, 3]);
     }
 
@@ -394,10 +400,7 @@ mod test {
     fn mania() {
         let mut mania = Mania::default_for(4);
         assert_eq!(mania.column_line_width, &[2., 2., 2., 2.]);
-        for (k, v) in [
-            ("ColumnLineWidth", "1,2,3,4"),
-            ("KeyImage3D", "abc"),
-        ] {
+        for (k, v) in [("ColumnLineWidth", "1,2,3,4"), ("KeyImage3D", "abc")] {
             mania
                 .consume_line(
                     &DeserializationContext { strict: true },
@@ -407,6 +410,9 @@ mod test {
                 .unwrap();
         }
         assert_eq!(mania.column_line_width, &[1., 2., 3., 4.]);
-        assert_eq!(mania.key_images_d, &[None, None, Some(Cow::Borrowed("abc")), None]);
+        assert_eq!(
+            mania.key_images_d,
+            &[None, None, Some(Cow::Borrowed("abc")), None]
+        );
     }
 }
