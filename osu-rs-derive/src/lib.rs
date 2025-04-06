@@ -67,10 +67,7 @@ fn derive_beatmap_section2(input: TokenStream) -> TokenStream {
         assert!(fields
             .insert(
                 field.ident.expect("field ident"),
-                FieldInfo {
-                    kind: kind,
-                    aliases
-                }
+                FieldInfo { kind, aliases }
             )
             .is_none());
     }
@@ -150,7 +147,7 @@ fn derive_beatmap_section2(input: TokenStream) -> TokenStream {
                 &mut self,
                 ctx: &Context,
                 line: impl StaticCow<'a>,
-            ) -> Result<Option<Section>, ParseError> {
+            ) -> Result<Option<Section>, ParseError<'static>> {
                 if let Some((key, value)) = line.split_once(':') {
                     let key = key.trim();
                     let value = value.trim();
@@ -166,7 +163,297 @@ fn derive_beatmap_section2(input: TokenStream) -> TokenStream {
     }
 }
 
-fn derive_beatmap_enum2(input: TokenStream) -> TokenStream {
+// its similar to derive_beatmap_section but different enough for me to just completely split it
+fn derive_skin_section2(input: TokenStream) -> TokenStream {
+    let input: DeriveInput = syn::parse2(input).unwrap();
+    struct FieldInfo {
+        kind: FieldKind,
+        to_i32: bool,
+        aliases: Vec<TokenStream>,
+    }
+    enum FieldKind {
+        Skip,
+        Default(TokenStream),
+        Version,
+        Mania(TokenStream, Option<(String, String)>),
+        NumPrefix(String),
+    }
+    let mut mania = false;
+    let mut fields = HashMap::<Ident, FieldInfo>::new();
+    let name = input.ident;
+    let generics = input.generics;
+    let Data::Struct(data) = input.data else {
+        panic!("#[derive(SkinSection)] is only allowed on structs")
+    };
+    let Fields::Named(named) = data.fields else {
+        panic!("#[derive(SkinSection)] is only allowed on named fields")
+    };
+    for field in named.named {
+        let mut aliases = vec![];
+        let mut kind = None;
+        let mut to_i32 = false;
+        for attr in field.attrs {
+            match attr.meta.path().to_token_stream().to_string().as_str() {
+                "skip" => {
+                    assert!(kind.is_none());
+                    kind = Some(FieldKind::Skip);
+                }
+                "alias" => match attr.meta {
+                    Meta::List(x) => {
+                        aliases.push(x.tokens);
+                    }
+                    _ => panic!("#[derive(SkinSection)]: non-Meta::List"),
+                },
+                "default" => match attr.meta {
+                    Meta::List(x) => {
+                        assert!(kind.is_none());
+                        kind = Some(FieldKind::Default(x.tokens));
+                    }
+                    _ => panic!("#[derive(SkinSection)]: non-Meta::List"),
+                },
+                "version" => {
+                    assert!(kind.is_none());
+                    kind = Some(FieldKind::Version);
+                }
+                "mania" => match attr.meta {
+                    Meta::List(x) => {
+                        mania = true;
+                        assert!(kind.is_none());
+                        let mut t = x.tokens.into_iter();
+                        let t0 = t.next().unwrap();
+                        let t1 = t.next().unwrap();
+                        let t2 = t.next().unwrap();
+                        let t3 = t.next().unwrap();
+                        let t4 = t.next().unwrap();
+                        assert_eq!(t1.to_string().as_str(), ",");
+                        assert_eq!(t3.to_string().as_str(), ",");
+                        let t0: LitStr = syn::parse2(t0.into_token_stream()).unwrap();
+                        let t2: LitStr = syn::parse2(t2.into_token_stream()).unwrap();
+                        kind = Some(FieldKind::Mania(
+                            t4.into_token_stream(),
+                            Some((t0.value(), t2.value())),
+                        ));
+                    }
+                    _ => panic!("#[derive(SkinSection)]: non-Meta::List"),
+                },
+                "mania2" => match attr.meta {
+                    Meta::List(x) => {
+                        mania = true;
+                        assert!(kind.is_none());
+                        kind = Some(FieldKind::Mania(x.tokens, None));
+                    }
+                    _ => panic!("#[derive(SkinSection)]: non-Meta::List"),
+                },
+                "to" => match attr.meta {
+                    Meta::List(x) => {
+                        let mut tokens = x.tokens.into_iter();
+                        let ty = tokens.next();
+                        if let Some(ty) = ty {
+                            let ty = ty.to_string();
+                            assert_eq!(ty, "i32");
+                            to_i32 = true;
+                            assert!(tokens.next().is_none());
+                        }
+                    }
+                    _ => panic!("#[derive(SkinSection)]: non-Meta::List"),
+                },
+                "number_with_prefix" => match attr.meta {
+                    Meta::List(x) => {
+                        assert!(kind.is_none());
+                        let mut tokens = x.tokens.into_iter();
+                        let s = tokens.next();
+                        let s: LitStr = syn::parse2(s.into_token_stream()).unwrap();
+                        assert!(tokens.next().is_none());
+                        kind = Some(FieldKind::NumPrefix(s.value()));
+                    }
+                    _ => panic!("#[derive(SkinSection)]: non-Meta::List"),
+                },
+                "doc" => {}
+                x => panic!("{x}"),
+            }
+        }
+        let kind = kind.unwrap();
+        assert!(fields
+            .insert(
+                field.ident.expect("field ident"),
+                FieldInfo {
+                    kind,
+                    aliases,
+                    to_i32
+                }
+            )
+            .is_none());
+    }
+    let mut match_fields = TokenStream::new();
+    let mut valid_fields = TokenStream::new();
+    let mut default_fields = TokenStream::new();
+    let mut ser = TokenStream::new();
+    let mut ser_compact = TokenStream::new();
+    for (name, info) in fields {
+        let name_camel = name
+            .to_string()
+            .split('_')
+            .map(|x| {
+                let mut first = true;
+                x.chars()
+                    .map(|x| {
+                        if first {
+                            first = false;
+                            x.to_ascii_uppercase()
+                        } else {
+                            x
+                        }
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        let lit = syn::LitStr::new(&name_camel, proc_macro2::Span::call_site()).into_token_stream();
+        for lit in [lit].into_iter().chain(info.aliases) {
+            match info.kind {
+                FieldKind::Skip => continue,
+                FieldKind::Default(_) | FieldKind::Mania(_, None) => {
+                    match_fields.extend(quote! {
+                        #lit => {
+                            self.#name = ParseField::parse_field(#lit, value)?;
+                            Ok(())
+                        }
+                    });
+                    valid_fields.extend(quote! { #lit, });
+                }
+                FieldKind::Version => {
+                    match_fields.extend(quote! {
+                        #lit => {
+                            if value.as_ref() == "latest" {
+                                self.#name = None;
+                            } else {
+                                self.#name = Some(ParseField::parse_field(#lit, value)?);
+                            }
+                            Ok(())
+                        }
+                    });
+                    valid_fields.extend(quote! { #lit, });
+                }
+                FieldKind::Mania(_, Some((ref pre, ref post))) => {
+                    for i in 0usize..18 {
+                        let mut lit = pre.clone();
+                        lit.push_str(&(i + 1).to_string());
+                        lit.push_str(post);
+                        valid_fields.extend(quote! { #lit, });
+                        match_fields.extend(quote! {
+                            #lit if #i < self.#name.len() => {
+                                self.#name[#i] = ParseField::parse_field(#lit, value)?;
+                                Ok(())
+                            }
+                        });
+                    }
+                }
+                FieldKind::NumPrefix(ref s) => {
+                    match_fields.extend(quote! {
+                        s if matches!(s.strip_prefix(#s), Some(x) if x.bytes().all(|x| x.is_ascii_digit())) => {
+                            let s = s.strip_prefix(#s).unwrap();
+                            self.#name.push(ParseField::parse_field(s, value)?);
+                            Ok(())
+                        }
+                    })
+                }
+            }
+        }
+        match info.kind {
+            FieldKind::Skip => {}
+            FieldKind::Version => {
+                default_fields.extend(quote! {
+                    #name: Some(1.0),
+                });
+            }
+            FieldKind::Default(def) => {
+                default_fields.extend(quote! {
+                    #name: #def,
+                });
+            }
+            FieldKind::NumPrefix(_) => {
+                default_fields.extend(quote! {
+                    #name: vec![],
+                });
+            }
+            FieldKind::Mania(def, _) => {
+                default_fields.extend(quote! {
+                    #name: vec![#def; keys as usize],
+                });
+            }
+        }
+    }
+    let name_str = LitStr::new(&(name.to_string() + " section"), Span::call_site());
+    let extra_handler = quote! {
+        {
+            if ctx.strict {
+                Err(ParseError::curry(#name_str, value.span())(RecordParseError {
+                    valid_fields: &[#valid_fields],
+                }))
+            } else {
+                Ok(())
+            }
+        }
+    };
+    let mut ret = quote! {
+        impl<'a> SkinSection<'a> for #name #generics {
+            fn consume_line(
+                &mut self,
+                ctx: &DeserializationContext,
+                key: &'a str,
+                value: impl StaticCow<'a>
+            ) -> Result<(), ParseError<'a>> {
+                match key.as_ref() {
+                    #match_fields
+                    _ => #extra_handler
+                }
+            }
+        }
+    };
+    if mania {
+        ret.extend(quote! {
+            impl #generics #name #generics {
+                fn serialize(&self, out: impl io::Write) -> io::Result<()> {
+                    #ser
+                    Ok(())
+                }
+                fn serialize_compact(&self, out: impl io::Write) -> io::Result<()> {
+                    #ser_compact
+                    Ok(())
+                }
+                fn default_for(keys: u8) -> Self {
+                    Self {
+                        keys,
+                        #default_fields
+                    }
+                }
+            }
+        });
+    } else {
+        ret.extend(quote! {
+            impl #generics Default for #name #generics {
+                fn default() -> Self {
+                    Self {
+                        #default_fields
+                    }
+                }
+            }
+            impl #generics #name #generics {
+                fn serialize(&self, out: impl io::Write) -> io::Result<()> {
+                    #ser
+                    Ok(())
+                }
+                fn serialize_compact(&self, out: impl io::Write) -> io::Result<()> {
+                    #ser_compact
+                    Ok(())
+                }
+            }
+        });
+    }
+    ret
+}
+
+fn derive_enum2(input: TokenStream, beatmap: bool) -> TokenStream {
     let input: DeriveInput = syn::parse2(input).unwrap();
     let name = input.ident;
     let mut ignore_case = false;
@@ -285,6 +572,30 @@ fn derive_beatmap_enum2(input: TokenStream) -> TokenStream {
             }
         });
     }
+    extra.extend(if beatmap {
+        quote! {
+            impl<'a> ParseField<'a> for #name {
+                fn parse_field(
+                    name: impl Into<Cow<'static, str>>,
+                    _ctx: &Context,
+                    line: impl StaticCow<'a>,
+                ) -> Result<Self, ParseError<'static>> {
+                    line.as_ref().parse().map_err(ParseError::curry(name, line.span()))
+                }
+            }
+        }
+    } else {
+        quote! {
+            impl<'a> ParseField<'a> for #name {
+                fn parse_field(
+                    name: &'a str,
+                    line: impl StaticCow<'a>,
+                ) -> Result<Self, ParseError<'a>> {
+                    line.as_ref().parse().map_err(ParseError::curry(name, line.span()))
+                }
+            }
+        }
+    });
     quote! {
         #extra
         impl std::fmt::Display for #name {
@@ -317,15 +628,6 @@ fn derive_beatmap_enum2(input: TokenStream) -> TokenStream {
                 }
             }
         }
-        impl<'a> ParseField<'a> for #name {
-            fn parse_field(
-                name: impl Into<Cow<'static, str>>,
-                _ctx: &Context,
-                line: impl StaticCow<'a>,
-            ) -> Result<Self, ParseError> {
-                line.as_ref().parse().map_err(ParseError::curry(name, line.span()))
-            }
-        }
     }
 }
 
@@ -334,7 +636,20 @@ pub fn derive_beatmap_section(input: proc_macro::TokenStream) -> proc_macro::Tok
     derive_beatmap_section2(input.into()).into()
 }
 
+#[proc_macro_derive(
+    SkinSection,
+    attributes(default, version, alias, mania, mania2, skip, to, number_with_prefix)
+)]
+pub fn derive_skin_section(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    derive_skin_section2(input.into()).into()
+}
+
 #[proc_macro_derive(BeatmapEnum, attributes(beatmap_enum))]
 pub fn derive_beatmap_enum(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    derive_beatmap_enum2(input.into()).into()
+    derive_enum2(input.into(), true).into()
+}
+
+#[proc_macro_derive(SkinEnum, attributes(beatmap_enum))]
+pub fn derive_skin_enum(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    derive_enum2(input.into(), false).into()
 }

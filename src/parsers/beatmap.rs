@@ -6,17 +6,23 @@ use std::{
 use thiserror::Error;
 
 use crate::{
-    BeatmapSection, Context, EventSampleSet, EventTrigger, FullHitSound, HitObject, HitObjectFlags,
-    HitObjectKind, HitSound, SampleSet, SliderKind, SoundType, SoundTypes, Span, StaticCow, Time,
-    TimingPoint, TimingPointFlags,
+    beatmap::{
+        BeatmapSection, Context, EventSampleSet, EventTrigger, FullHitSound, HitObject,
+        HitObjectFlags, HitObjectKind, HitSound, SampleSet, Section, SliderKind, SoundType,
+        SoundTypes, Time, TimingPoint, TimingPointFlags,
+    },
+    util::StaticCow,
+    ParseError,
 };
+
+use super::NoBoolValue;
 
 pub trait ParseField<'a>: Sized {
     fn parse_field(
         name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError>;
+    ) -> Result<Self, ParseError<'static>>;
 }
 
 macro_rules! impl_parse_field {
@@ -26,7 +32,7 @@ macro_rules! impl_parse_field {
                 name: impl Into<Cow<'static, str>>,
                 _ctx: &Context,
                 line: impl StaticCow<'a>,
-            ) -> Result<Self, ParseError> {
+            ) -> Result<Self, ParseError<'static>> {
                 line.as_ref().parse().map_err(ParseError::curry(name, line.span()))
             }
         })*
@@ -43,7 +49,7 @@ impl<'a, T: ParseField<'a>> BeatmapSection<'a> for Vec<T> {
         &mut self,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Option<crate::Section>, ParseError> {
+    ) -> Result<Option<Section>, ParseError<'static>> {
         self.push(ParseField::parse_field("", ctx, line)?);
         Ok(None)
     }
@@ -56,7 +62,7 @@ impl<'a, T: Copy + Clone + From<i8> + Add<T, Output = T> + Sub<T, Output = T> + 
         name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, ParseError<'static>> {
         Ok(Self::new(
             ParseField::parse_field(name, ctx, line)?,
             ctx.version,
@@ -69,7 +75,7 @@ impl<'a> ParseField<'a> for Vec<i32> {
         name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, ParseError<'static>> {
         let mut ret = vec![];
         let name = name.into();
         for val in line.split(',') {
@@ -86,7 +92,7 @@ impl<'a> ParseField<'a> for bool {
         name: impl Into<Cow<'static, str>>,
         _ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, ParseError<'static>> {
         match line.as_ref().bytes().next() {
             Some(b'1') => Ok(true),
             Some(_) => Ok(false),
@@ -100,7 +106,7 @@ impl<'a> ParseField<'a> for TimingPoint {
         _name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, ParseError<'static>> {
         let mut end_span = line.span();
         end_span.start = end_span.end;
         let mut s = line.split(',');
@@ -167,7 +173,7 @@ impl<'a> ParseField<'a> for HitObject<'a> {
         _name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, ParseError<'static>> {
         let mut end_span = line.span();
         end_span.start = end_span.end;
         let mut s = line.split(',');
@@ -387,7 +393,7 @@ impl<'a> ParseField<'a> for EventTrigger {
         name: impl Into<Cow<'static, str>>,
         _ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, ParseError<'static>> {
         match line.as_ref() {
             "Passing" => Ok(Self::Passing),
             "Failing" => Ok(Self::Failing),
@@ -483,121 +489,8 @@ impl<'a> ParseField<'a> for Cow<'a, str> {
         _name: impl Into<Cow<'static, str>>,
         _ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, ParseError<'static>> {
         Ok(line.into_cow())
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct EnumParseError {
-    pub valid_variants: &'static [&'static str],
-}
-
-impl std::fmt::Display for EnumParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("unexpected enum value (valid values: ")?;
-        let mut first = true;
-        for x in self.valid_variants {
-            if first {
-                first = false;
-            } else {
-                f.write_str(", ")?;
-            }
-            f.write_str(x)?;
-        }
-        f.write_str(")")
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct IntEnumParseError {
-    pub variant: i32,
-    pub valid_variants: &'static [i32],
-}
-
-impl std::fmt::Display for IntEnumParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unexpected enum value {} (valid values: ", self.variant)?;
-        let mut first = true;
-        for x in self.valid_variants {
-            if first {
-                first = false;
-            } else {
-                f.write_str(", ")?;
-            }
-            x.fmt(f)?;
-        }
-        f.write_str(")")
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct CharEnumParseError {
-    pub variant: char,
-    pub valid_variants: &'static [char],
-}
-
-impl std::fmt::Display for CharEnumParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unexpected enum value {} (valid values: ", self.variant)?;
-        let mut first = true;
-        for x in self.valid_variants {
-            if first {
-                first = false;
-            } else {
-                f.write_str(", ")?;
-            }
-            x.fmt(f)?;
-        }
-        f.write_str(")")
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct InvalidRecordField;
-
-impl std::fmt::Display for InvalidRecordField {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "invalid record field")
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct RecordParseError {
-    pub valid_fields: &'static [&'static str],
-}
-
-impl std::fmt::Display for RecordParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("unexpected field (valid fields: ")?;
-        let mut first = true;
-        for x in self.valid_fields {
-            if first {
-                first = false;
-            } else {
-                f.write_str(", ")?;
-            }
-            f.write_str(x)?;
-        }
-        f.write_str(")")
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct NoBoolValue;
-
-impl std::fmt::Display for NoBoolValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("missing boolean value")
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct InvalidColour;
-
-impl std::fmt::Display for InvalidColour {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("invalid colour")
     }
 }
 
@@ -634,123 +527,5 @@ pub struct InvalidEventCommand;
 impl std::fmt::Display for InvalidEventCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("invalid event command")
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum ParseErrorReason {
-    #[error("{0}")]
-    Bool(
-        #[from]
-        #[source]
-        NoBoolValue,
-    ),
-    #[error("{0}")]
-    InvalidColour(
-        #[from]
-        #[source]
-        InvalidColour,
-    ),
-    #[error("{0}")]
-    InvalidTimingPoint(
-        #[from]
-        #[source]
-        InvalidTimingPoint,
-    ),
-    #[error("{0}")]
-    InvalidHitObject(
-        #[from]
-        #[source]
-        InvalidHitObject,
-    ),
-    #[error("{0}")]
-    InvalidEvent(
-        #[from]
-        #[source]
-        InvalidEvent,
-    ),
-    #[error("{0}")]
-    InvalidEventCommand(
-        #[from]
-        #[source]
-        InvalidEventCommand,
-    ),
-    #[error("{0}")]
-    Int(
-        #[from]
-        #[source]
-        std::num::ParseIntError,
-    ),
-    #[error("{0}")]
-    Float(
-        #[from]
-        #[source]
-        std::num::ParseFloatError,
-    ),
-    #[error("{0}")]
-    Enum(
-        #[from]
-        #[source]
-        EnumParseError,
-    ),
-    #[error("{0}")]
-    Record(
-        #[from]
-        #[source]
-        RecordParseError,
-    ),
-    #[error("{0}")]
-    InvalidRecordField(
-        #[from]
-        #[source]
-        InvalidRecordField,
-    ),
-    #[error("{0}")]
-    IntEnum(
-        #[from]
-        #[source]
-        IntEnumParseError,
-    ),
-    #[error("{0}")]
-    CharEnum(
-        #[from]
-        #[source]
-        CharEnumParseError,
-    ),
-}
-
-impl From<std::convert::Infallible> for ParseErrorReason {
-    fn from(value: std::convert::Infallible) -> Self {
-        match value {}
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct ParseError {
-    pub field: Cow<'static, str>,
-    pub span: Span,
-    #[source]
-    pub reason: ParseErrorReason,
-}
-
-impl ParseError {
-    pub fn curry<E: Into<ParseErrorReason>>(
-        field: impl Into<Cow<'static, str>>,
-        span: Span,
-    ) -> impl FnOnce(E) -> Self {
-        move |reason| Self {
-            field: field.into(),
-            span,
-            reason: reason.into(),
-        }
-    }
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("failed to parse ")?;
-        f.write_str(&self.field)?;
-        f.write_str(": ")?;
-        self.reason.fmt(f)
     }
 }

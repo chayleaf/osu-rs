@@ -55,9 +55,9 @@ impl<'a> StaticCow<'a> for Lended<'_> {
     }
     fn trim_matches2(&self, c1: char, c2: char) -> Self {
         let mut span = self.1;
-        let value = self.0.trim_start_matches(|x| x == c1 || x == c2);
+        let value = self.0.trim_start_matches([c1, c2]);
         span.start = span.end - value.len();
-        let value = value.trim_end_matches(|x| x == c1 || x == c2);
+        let value = value.trim_end_matches([c1, c2]);
         span.end = span.start + value.len();
         Self(value, span)
     }
@@ -118,9 +118,9 @@ impl<'a> StaticCow<'a> for Borrowed<'a> {
     }
     fn trim_matches2(&self, c1: char, c2: char) -> Self {
         let mut span = self.1;
-        let value = self.0.trim_start_matches(|x| x == c1 || x == c2);
+        let value = self.0.trim_start_matches([c1, c2]);
         span.start = span.end - value.len();
-        let value = value.trim_end_matches(|x| x == c1 || x == c2);
+        let value = value.trim_end_matches([c1, c2]);
         span.end = span.start + value.len();
         Self(value, span)
     }
