@@ -64,6 +64,7 @@ fn main() {
         }
         "verify" => {
             let dir = std::env::args_os().nth(2).expect("expected dir");
+            let out_filename = std::env::args_os().nth(3);
             for entry in walkdir::WalkDir::new(dir) {
                 let entry = entry.unwrap();
                 if entry
@@ -71,7 +72,7 @@ fn main() {
                     .extension()
                     .is_some_and(|x| x.as_bytes() == b"osu")
                 {
-                    println!("verifying {:?}", entry.file_name());
+                    println!("verifying {:?}", entry.path());
                     let text = std::fs::read_to_string(entry.path()).unwrap();
                     let bm = parse_beatmap(&text);
                     let mut out = Vec::new();
@@ -88,6 +89,9 @@ fn main() {
                     }
                     let span = pos..pos;
                     if out != text.as_bytes() {
+                        if let Some(out) = &out_filename {
+                            bm.serialize(std::fs::File::create(out).unwrap()).unwrap();
+                        }
                         Report::build(
                             ReportKind::Error,
                             (entry.file_name().to_string_lossy(), span.clone()),
