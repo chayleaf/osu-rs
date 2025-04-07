@@ -9,10 +9,12 @@ use osu_rs_derive::{SkinEnum, SkinSection};
 
 use crate::{
     beatmap::ReadError,
+    error::{
+        EnumParseError, IntEnumParseError, MissingKeycountError, ParseError, RecordParseError,
+        Span, UnknownSectionName,
+    },
     parsers::skin::{ParseField, ParseFieldInPlace, SerializeBox, SerializeField},
     util::{Borrowed, Lended, StaticCow},
-    EnumParseError, IntEnumParseError, MissingKeycountError, ParseError, RecordParseError, Span,
-    UnknownSectionName,
 };
 
 pub type ColourRgb = (u8, u8, u8);
@@ -644,8 +646,6 @@ impl<'a> SkinIni<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::{util::Borrowed, Span};
-
     use super::*;
 
     const DCTX: &DeserializationContext = &DeserializationContext {
@@ -676,8 +676,16 @@ mod test {
             assert_eq!(skin.catch_the_beat, a.catch_the_beat);
             for i in 0..19 {
                 assert_eq!(
-                    skin.mania.iter().find(|x| x.keys == i).cloned().unwrap_or_else(|| Mania::new(i)),
-                    a.mania.iter().find(|x| x.keys == i).cloned().unwrap_or_else(|| Mania::new(i)),
+                    skin.mania
+                        .iter()
+                        .find(|x| x.keys == i)
+                        .cloned()
+                        .unwrap_or_else(|| Mania::new(i)),
+                    a.mania
+                        .iter()
+                        .find(|x| x.keys == i)
+                        .cloned()
+                        .unwrap_or_else(|| Mania::new(i)),
                 );
             }
         }

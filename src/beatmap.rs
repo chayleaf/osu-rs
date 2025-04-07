@@ -1,13 +1,12 @@
 //! Beatmap parsing and serialization.
 #![allow(clippy::unit_arg)]
 use crate::{
-    parsers::{
-        beatmap::{InvalidEvent, InvalidEventCommand, ParseField},
-        CharEnumParseError, EnumParseError, IntEnumParseError, InvalidColour, InvalidRecordField,
-        RecordParseError,
+    error::{
+        CharEnumParseError, EnumParseError, IntEnumParseError, InvalidColour, InvalidEvent,
+        InvalidEventCommand, InvalidRecordField, ParseError, RecordParseError, Span,
     },
+    parsers::beatmap::ParseField,
     util::{Borrowed, Lended, StaticCow},
-    ParseError, Span,
 };
 use bitflags::bitflags;
 use osu_rs_derive::{BeatmapEnum, BeatmapSection};

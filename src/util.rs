@@ -1,6 +1,6 @@
 use std::borrow::{Borrow, Cow};
 
-use crate::Span;
+use crate::error::Span;
 
 pub trait StaticCow<'a>: Copy + Clone + Sized + Borrow<str> + AsRef<str> {
     fn new(s: &'static str, span: Span) -> Self;

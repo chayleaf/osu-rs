@@ -1,14 +1,8 @@
 use std::{borrow::Cow, io};
 
-use thiserror::Error;
-
 use crate::{
-    skin::{ManiaNoteBodyStyle, ManiaSpecialStyle, SliderStyle},
-    util::StaticCow,
-    ParseError,
+    error::{InvalidColour, ParseError}, skin::{ManiaNoteBodyStyle, ManiaSpecialStyle, SliderStyle}, util::StaticCow
 };
-
-use super::InvalidColour;
 
 pub trait SerializeField {
     fn should_serialize(&self) -> bool {
@@ -334,15 +328,6 @@ impl<'a> ParseField<'a> for Cow<'a, str> {
         text: impl StaticCow<'a>,
     ) -> Result<Self, ParseError> {
         Ok(text.into_cow())
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct MissingKeycountError;
-
-impl std::fmt::Display for MissingKeycountError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("mania section has missing keycount")
     }
 }
 

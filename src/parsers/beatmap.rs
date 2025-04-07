@@ -3,19 +3,15 @@ use std::{
     ops::{Add, Sub},
 };
 
-use thiserror::Error;
-
 use crate::{
     beatmap::{
         BeatmapSection, Context, EventSampleSet, EventTrigger, FullHitSound, HitObject,
         HitObjectFlags, HitObjectKind, HitSound, SampleSet, Section, SliderKind, SoundType,
         SoundTypes, Time, TimingPoint, TimingPointFlags,
     },
+    error::{InvalidEventCommand, InvalidHitObject, InvalidTimingPoint, NoBoolValue, ParseError},
     util::StaticCow,
-    ParseError,
 };
-
-use super::NoBoolValue;
 
 pub trait ParseField<'a>: Sized {
     fn parse_field(
@@ -491,41 +487,5 @@ impl<'a> ParseField<'a> for Cow<'a, str> {
         line: impl StaticCow<'a>,
     ) -> Result<Self, ParseError> {
         Ok(line.into_cow())
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct InvalidTimingPoint;
-
-impl std::fmt::Display for InvalidTimingPoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("invalid timing point")
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct InvalidHitObject;
-
-impl std::fmt::Display for InvalidHitObject {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("invalid hit object")
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct InvalidEvent;
-
-impl std::fmt::Display for InvalidEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("invalid event")
-    }
-}
-
-#[derive(Debug, Error)]
-pub struct InvalidEventCommand;
-
-impl std::fmt::Display for InvalidEventCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("invalid event command")
     }
 }
