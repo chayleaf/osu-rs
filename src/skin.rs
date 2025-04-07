@@ -358,7 +358,7 @@ pub struct SkinIni<'a> {
     pub general: General<'a>,
     pub colours: Colours,
     pub fonts: Fonts<'a>,
-    pub catch_the_beat: Option<CatchTheBeat>,
+    pub catch_the_beat: CatchTheBeat,
     pub mania: Vec<Mania<'a>>,
 }
 
@@ -418,12 +418,7 @@ impl SkinIni<'static> {
                     "General" => Some(Section::General),
                     "Colours" => Some(Section::Colours),
                     "Fonts" => Some(Section::Fonts),
-                    "CatchTheBeat" => {
-                        if ret.catch_the_beat.is_none() {
-                            ret.catch_the_beat = Some(CatchTheBeat::default());
-                        }
-                        Some(Section::CatchTheBeat)
-                    }
+                    "CatchTheBeat" => Some(Section::CatchTheBeat),
                     "Mania" => {
                         let mut keys = 0;
                         let mut tmp_pos = pos;
@@ -484,11 +479,7 @@ impl SkinIni<'static> {
                         Section::General => ret.general.consume_line(ctx, k, v)?,
                         Section::Colours => ret.colours.consume_line(ctx, k, v)?,
                         Section::Fonts => ret.fonts.consume_line(ctx, k, v)?,
-                        Section::CatchTheBeat => ret
-                            .catch_the_beat
-                            .as_mut()
-                            .unwrap()
-                            .consume_line(ctx, k, v)?,
+                        Section::CatchTheBeat => ret.catch_the_beat.consume_line(ctx, k, v)?,
                         Section::Mania => ret.mania.last_mut().unwrap().consume_line(ctx, k, v)?,
                     }
                 }
@@ -522,12 +513,7 @@ impl<'a> SkinIni<'a> {
                     "General" => Some(Section::General),
                     "Colours" => Some(Section::Colours),
                     "Fonts" => Some(Section::Fonts),
-                    "CatchTheBeat" => {
-                        if ret.catch_the_beat.is_none() {
-                            ret.catch_the_beat = Some(CatchTheBeat::default());
-                        }
-                        Some(Section::CatchTheBeat)
-                    }
+                    "CatchTheBeat" => Some(Section::CatchTheBeat),
                     "Mania" => {
                         let mut keys = 0;
                         let mut tmp_pos = pos;
@@ -595,11 +581,7 @@ impl<'a> SkinIni<'a> {
                         Section::General => ret.general.consume_line(ctx, k, v)?,
                         Section::Colours => ret.colours.consume_line(ctx, k, v)?,
                         Section::Fonts => ret.fonts.consume_line(ctx, k, v)?,
-                        Section::CatchTheBeat => ret
-                            .catch_the_beat
-                            .as_mut()
-                            .unwrap()
-                            .consume_line(ctx, k, v)?,
+                        Section::CatchTheBeat => ret.catch_the_beat.consume_line(ctx, k, v)?,
                         Section::Mania => ret.mania.last_mut().unwrap().consume_line(ctx, k, v)?,
                     }
                 }
