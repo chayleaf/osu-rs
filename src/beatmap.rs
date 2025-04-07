@@ -27,7 +27,7 @@ pub trait BeatmapSection<'a> {
         &mut self,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Option<Section>, ParseError<'static>>;
+    ) -> Result<Option<Section>, ParseError>;
 }
 
 use thiserror::Error;
@@ -273,7 +273,7 @@ impl<'a> BeatmapSection<'a> for Colours<'a> {
         &mut self,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Option<Section>, ParseError<'static>> {
+    ) -> Result<Option<Section>, ParseError> {
         if let Some((key, value)) = line.split_once(':') {
             let key = key.trim();
             let value = value.trim();
@@ -315,7 +315,7 @@ impl<'a> BeatmapSection<'a> for Variables<'a> {
         &mut self,
         _ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Option<Section>, ParseError<'static>> {
+    ) -> Result<Option<Section>, ParseError> {
         if let Some((key, value)) = line.split_once('=') {
             self.variables.push((key.into_cow(), value.into_cow()));
         }
@@ -688,7 +688,7 @@ impl<'a> BeatmapSection<'a> for Events<'a> {
         &mut self,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Option<Section>, ParseError<'static>> {
+    ) -> Result<Option<Section>, ParseError> {
         if line.as_ref().starts_with("//") {
             return Ok(None);
         }
@@ -1331,7 +1331,7 @@ pub enum ReadError {
     Parse(
         #[from]
         #[source]
-        ParseError<'static>,
+        ParseError,
     ),
 }
 
@@ -1340,7 +1340,7 @@ impl<'a> BeatmapSection<'a> for () {
         &mut self,
         _ctx: &Context,
         _line: impl StaticCow<'a>,
-    ) -> Result<Option<Section>, ParseError<'static>> {
+    ) -> Result<Option<Section>, ParseError> {
         Ok(None)
     }
 }
@@ -1403,8 +1403,8 @@ impl Beatmap<'static> {
     pub fn parse_file(file: impl io::Read + io::Seek) -> Result<Self, ReadError> {
         let mut file = BufReader::new(file);
         let mut line_buf = String::new();
-        let mut pos = 0;
-        let mut next_pos = pos + file.read_line(&mut line_buf)?;
+        let mut pos = 0u64;
+        let mut next_pos = pos + file.read_line(&mut line_buf)? as u64;
         if next_pos == pos {
             return Err(ReadError::Io(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -1418,7 +1418,7 @@ impl Beatmap<'static> {
             || line_buf.starts_with("\u{FEFF}osu file format")
         {
             let line = line_buf.trim_end_matches(['\n', '\r']);
-            let line = Lended(line, Span::new(pos, pos + line.len()));
+            let line = Lended(line, Span::new(pos, pos + line.len() as u64));
             let version = line.split('v').last().unwrap();
             i32::parse_field("version", &ctx, version)?
         } else {
@@ -1454,7 +1454,7 @@ impl Beatmap<'static> {
             }
 
             if !skip {
-                let line = Lended(line, Span::new(pos, pos + line.len()));
+                let line = Lended(line, Span::new(pos, pos + line.len() as u64));
 
                 let mut current = section;
                 while let Some(section) = current {
@@ -1474,7 +1474,7 @@ impl Beatmap<'static> {
                                 }
                                 ret.events.consume_line(
                                     &ret.context,
-                                    Lended(&line, Span::new(pos, pos + line.len())),
+                                    Lended(&line, Span::new(pos, pos + line.len() as u64)),
                                 )
                             }
                         }
@@ -1487,7 +1487,7 @@ impl Beatmap<'static> {
 
             line_buf.clear();
             pos = next_pos;
-            next_pos = pos + file.read_line(&mut line_buf)?;
+            next_pos = pos + file.read_line(&mut line_buf)? as u64;
             if next_pos == pos {
                 eof = true;
             }
@@ -1505,7 +1505,7 @@ impl Beatmap<'static> {
 }
 
 impl<'a> Beatmap<'a> {
-    pub fn parse_str(data: &'a str) -> Result<Self, ParseError<'static>> {
+    pub fn parse_str(data: &'a str) -> Result<Self, ParseError> {
         let mut pos = 0;
         let mut next_pos = memchr::memchr(b'\n', data.as_bytes())
             .map(|x| x + pos + 1)
@@ -1515,7 +1515,7 @@ impl<'a> Beatmap<'a> {
         };
         let version = if data[..next_pos].starts_with("osu file format") {
             let line = data[..next_pos].trim_end_matches(['\n', '\r']);
-            let line = Borrowed(line, Span::new(pos, pos + line.len()));
+            let line = Borrowed(line, Span::new(pos as u64, pos as u64 + line.len() as u64));
             let version = line.split('v').last().unwrap();
             i32::parse_field("version", &ctx, version)?
         } else {
@@ -1550,7 +1550,7 @@ impl<'a> Beatmap<'a> {
             }
 
             if !skip {
-                let line = Borrowed(line, Span::new(pos, pos + line.len()));
+                let line = Borrowed(line, Span::new(pos as u64, pos as u64 + line.len() as u64));
 
                 let mut current = section;
                 while let Some(section) = current {
@@ -1570,7 +1570,10 @@ impl<'a> Beatmap<'a> {
                                 }
                                 ret.events.consume_line(
                                     &ret.context,
-                                    Lended(&line, Span::new(pos, pos + line.len())),
+                                    Lended(
+                                        &line,
+                                        Span::new(pos as u64, pos as u64 + line.len() as u64),
+                                    ),
                                 )
                             }
                         }

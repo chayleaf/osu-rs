@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 pub use parsers::{
     beatmap::{InvalidEvent, InvalidEventCommand, InvalidHitObject, InvalidTimingPoint},
+    skin::MissingKeycountError,
     CharEnumParseError, EnumParseError, IntEnumParseError, InvalidColour, InvalidRecordField,
     NoBoolValue, RecordParseError,
 };
@@ -9,15 +10,15 @@ use thiserror::Error;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Span {
-    pub start: usize,
-    pub end: usize,
+    pub start: u64,
+    pub end: u64,
 }
 
 impl Span {
-    pub fn new(start: usize, end: usize) -> Self {
+    pub fn new(start: u64, end: u64) -> Self {
         Self { start, end }
     }
-    pub fn into_range(self) -> std::ops::Range<usize> {
+    pub fn into_range(self) -> std::ops::Range<u64> {
         self.start..self.end
     }
 }
@@ -27,6 +28,15 @@ pub mod skin;
 
 mod parsers;
 mod util;
+
+#[derive(Debug, Error)]
+pub struct UnknownSectionName;
+
+impl std::fmt::Display for UnknownSectionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("unknown section name")
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ParseErrorReason {
@@ -108,6 +118,18 @@ pub enum ParseErrorReason {
         #[source]
         CharEnumParseError,
     ),
+    #[error("{0}")]
+    MissingKeycount(
+        #[from]
+        #[source]
+        MissingKeycountError,
+    ),
+    #[error("{0}")]
+    UnknownSectionName(
+        #[from]
+        #[source]
+        UnknownSectionName,
+    ),
 }
 
 impl From<std::convert::Infallible> for ParseErrorReason {
@@ -117,16 +139,16 @@ impl From<std::convert::Infallible> for ParseErrorReason {
 }
 
 #[derive(Debug, Error)]
-pub struct ParseError<'a> {
-    pub field: Cow<'a, str>,
+pub struct ParseError {
+    pub field: Cow<'static, str>,
     pub span: Span,
     #[source]
     pub reason: ParseErrorReason,
 }
 
-impl<'a> ParseError<'a> {
+impl ParseError {
     pub(crate) fn curry<E: Into<ParseErrorReason>>(
-        field: impl Into<Cow<'a, str>>,
+        field: impl Into<Cow<'static, str>>,
         span: Span,
     ) -> impl FnOnce(E) -> Self {
         move |reason| Self {
@@ -137,7 +159,7 @@ impl<'a> ParseError<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for ParseError<'a> {
+impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("failed to parse ")?;
         f.write_str(&self.field)?;

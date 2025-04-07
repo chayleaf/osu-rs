@@ -147,7 +147,7 @@ fn derive_beatmap_section2(input: TokenStream) -> TokenStream {
                 &mut self,
                 ctx: &Context,
                 line: impl StaticCow<'a>,
-            ) -> Result<Option<Section>, ParseError<'static>> {
+            ) -> Result<Option<Section>, ParseError> {
                 if let Some((key, value)) = line.split_once(':') {
                     let key = key.trim();
                     let value = value.trim();
@@ -311,11 +311,18 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
         let lit = syn::LitStr::new(&name_camel, proc_macro2::Span::call_site()).into_token_stream();
         for lit in [lit].into_iter().chain(info.aliases) {
             match info.kind {
-                FieldKind::Skip => continue,
+                FieldKind::Skip => {
+                    match_fields.extend(quote! {
+                        #lit => {
+                            Ok(())
+                        }
+                    });
+                    valid_fields.extend(quote! { #lit, });
+                }
                 FieldKind::Default(_) | FieldKind::Mania(_, None) => {
                     match_fields.extend(quote! {
                         #lit => {
-                            self.#name = ParseField::parse_field(#lit, value)?;
+                            self.#name.parse_field_in_place(#lit, value)?;
                             Ok(())
                         }
                     });
@@ -342,7 +349,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                         valid_fields.extend(quote! { #lit, });
                         match_fields.extend(quote! {
                             #lit if #i < self.#name.len() => {
-                                self.#name[#i] = ParseField::parse_field(#lit, value)?;
+                                self.#name[#i].parse_field_in_place(#lit, value)?;
                                 Ok(())
                             }
                         });
@@ -350,9 +357,8 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                 }
                 FieldKind::NumPrefix(ref s) => {
                     match_fields.extend(quote! {
-                        s if matches!(s.strip_prefix(#s), Some(x) if x.bytes().all(|x| x.is_ascii_digit())) => {
-                            let s = s.strip_prefix(#s).unwrap();
-                            self.#name.push(ParseField::parse_field(s, value)?);
+                        x if matches!(x.strip_prefix(#s), Some(x) if x.bytes().all(|x| x.is_ascii_digit())) => {
+                            self.#name.push(ParseField::parse_field(#lit, value)?);
                             Ok(())
                         }
                     })
@@ -378,7 +384,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
             }
             FieldKind::Mania(def, _) => {
                 default_fields.extend(quote! {
-                    #name: vec![#def; keys as usize],
+                    #name: vec![#def; keys as usize].into(),
                 });
             }
         }
@@ -386,12 +392,12 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
     let name_str = LitStr::new(&(name.to_string() + " section"), Span::call_site());
     let extra_handler = quote! {
         {
-            if ctx.strict {
+            if matches!(ctx.strictness, ParseStrictness::IgnoreUnknownKeys) {
+                Ok(())
+            } else {
                 Err(ParseError::curry(#name_str, value.span())(RecordParseError {
                     valid_fields: &[#valid_fields],
                 }))
-            } else {
-                Ok(())
             }
         }
     };
@@ -400,9 +406,9 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
             fn consume_line(
                 &mut self,
                 ctx: &DeserializationContext,
-                key: &'a str,
+                key: impl StaticCow<'a>,
                 value: impl StaticCow<'a>
-            ) -> Result<(), ParseError<'a>> {
+            ) -> Result<(), ParseError> {
                 match key.as_ref() {
                     #match_fields
                     _ => #extra_handler
@@ -413,6 +419,12 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
     if mania {
         ret.extend(quote! {
             impl #generics #name #generics {
+                pub fn new(keys: u8) -> Self {
+                    Self {
+                        keys,
+                        #default_fields
+                    }
+                }
                 fn serialize(&self, out: impl io::Write) -> io::Result<()> {
                     #ser
                     Ok(())
@@ -420,12 +432,6 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                 fn serialize_compact(&self, out: impl io::Write) -> io::Result<()> {
                     #ser_compact
                     Ok(())
-                }
-                fn default_for(keys: u8) -> Self {
-                    Self {
-                        keys,
-                        #default_fields
-                    }
                 }
             }
         });
@@ -579,7 +585,7 @@ fn derive_enum2(input: TokenStream, beatmap: bool) -> TokenStream {
                     name: impl Into<Cow<'static, str>>,
                     _ctx: &Context,
                     line: impl StaticCow<'a>,
-                ) -> Result<Self, ParseError<'static>> {
+                ) -> Result<Self, ParseError> {
                     line.as_ref().parse().map_err(ParseError::curry(name, line.span()))
                 }
             }
@@ -588,9 +594,9 @@ fn derive_enum2(input: TokenStream, beatmap: bool) -> TokenStream {
         quote! {
             impl<'a> ParseField<'a> for #name {
                 fn parse_field(
-                    name: &'a str,
+                    name: impl Into<Cow<'static, str>>,
                     line: impl StaticCow<'a>,
-                ) -> Result<Self, ParseError<'a>> {
+                ) -> Result<Self, ParseError> {
                     line.as_ref().parse().map_err(ParseError::curry(name, line.span()))
                 }
             }

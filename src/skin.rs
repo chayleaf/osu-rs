@@ -1,32 +1,44 @@
 //! skin.ini parsing and serialization.
 
-use std::{borrow::Cow, io};
+use std::{
+    borrow::Cow,
+    io::{self, BufRead, BufReader, Seek},
+};
 
 use osu_rs_derive::{SkinEnum, SkinSection};
 
 use crate::{
-    parsers::skin::ParseField, util::StaticCow, EnumParseError, IntEnumParseError, ParseError,
-    RecordParseError,
+    beatmap::ReadError,
+    parsers::skin::{ParseField, ParseFieldInPlace},
+    util::{Borrowed, Lended, StaticCow},
+    EnumParseError, IntEnumParseError, MissingKeycountError, ParseError, RecordParseError, Span,
+    UnknownSectionName,
 };
 
 pub type ColourRgb = (u8, u8, u8);
 pub type ColourRgba = (u8, u8, u8, u8);
 
-struct SerializationContext {
+pub struct SerializationContext {
     pub compact: bool,
 }
 
-struct DeserializationContext {
-    pub strict: bool,
+pub enum ParseStrictness {
+    Strict,
+    IgnoreUnknownKeys,
+    IgnoreErrors,
+}
+
+pub struct DeserializationContext {
+    pub strictness: ParseStrictness,
 }
 
 trait SkinSection<'a> {
     fn consume_line(
         &mut self,
         ctx: &DeserializationContext,
-        key: &'a str,
+        key: impl StaticCow<'a>,
         value: impl StaticCow<'a>,
-    ) -> Result<(), ParseError<'a>>;
+    ) -> Result<(), ParseError>;
 }
 
 #[derive(SkinEnum, Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -37,7 +49,7 @@ pub enum SliderStyle {
     OpenGlSliders = 4,
 }
 
-#[derive(SkinSection)]
+#[derive(SkinSection, Clone, Debug, PartialEq)]
 pub struct General<'a> {
     #[default(Cow::Borrowed("Unknown"))]
     pub name: Cow<'a, str>,
@@ -82,7 +94,7 @@ pub struct General<'a> {
     pub version: Option<f64>,
 }
 
-#[derive(SkinSection)]
+#[derive(SkinSection, Clone, Debug, PartialEq)]
 pub struct Colours {
     #[default((255, 192, 0))]
     pub combo1: ColourRgb,
@@ -125,7 +137,7 @@ pub struct Colours {
     pub triangles: Vec<ColourRgb>,
 }
 
-#[derive(SkinSection)]
+#[derive(SkinSection, Clone, Debug, PartialEq)]
 pub struct Fonts<'a> {
     #[default(Cow::Borrowed("default"))]
     pub hit_circle_prefix: Cow<'a, str>,
@@ -141,7 +153,7 @@ pub struct Fonts<'a> {
     pub combo_overlap: i32,
 }
 
-#[derive(SkinSection)]
+#[derive(SkinSection, Clone, Debug, PartialEq)]
 pub struct CatchTheBeat {
     #[default((255, 0, 0, 255))]
     pub hyper_dash: ColourRgba,
@@ -170,28 +182,33 @@ pub enum ManiaNoteBodyStyle {
     RepeatMiddle = 5,
 }
 
-#[derive(SkinSection)]
+// mania/mania2 in derive macro means the Box<[T]> length is dependent on keycount
+// mania2 means its all in a single line (1,2,3,4)
+// mania means its a prefix/suffix with 1-based indexing
+// (if prefix = a, suffix = b, then a1b is the first element)
+// the last argument to mania/mania2 specifies the default values
+#[derive(SkinSection, Clone, Debug, PartialEq)]
 pub struct Mania<'a> {
     /// From 0 to 18 (inclusive).
     #[skip]
     pub keys: u8,
     /// Note that everything must be <= 0 or >= 2 (otherwise it gets replaced with 2)
     #[mania2(2.0f32)]
-    pub column_line_width: Vec<f32>,
+    pub column_line_width: Box<[f32]>,
     #[default(1.2f32)]
     pub barline_height: f32,
     #[default(ManiaSpecialStyle::None)]
     pub special_style: ManiaSpecialStyle,
     /// Clamped between 5 and 100
     #[mania2(30.0f32)]
-    pub column_width: Vec<f32>,
+    pub column_width: Box<[f32]>,
     // `column_spacing[i] >= -column_width[i + 1]` must be upheld for all `i` under `keys - 1`
     #[mania2(0.0f32)]
-    pub column_spacing: Vec<f32>,
+    pub column_spacing: Box<[f32]>,
     #[mania2(0.0f32)]
-    pub lighting_n_width: Vec<f32>,
+    pub lighting_n_width: Box<[f32]>,
     #[mania2(0.0f32)]
-    pub lighting_l_width: Vec<f32>,
+    pub lighting_l_width: Box<[f32]>,
 
     // SPRITES
 
@@ -200,17 +217,17 @@ pub struct Mania<'a> {
     // the defaults are extremely involved and i just don't want to deal with figuring this out
     // but basically it's a sequence of mania-key{1,2,S}{,D} / mania-note{1,2,S}{,H,L,T} in some particular order
     #[mania("KeyImage", "", None)]
-    pub key_images: Vec<Option<Cow<'a, str>>>,
+    pub key_images: Box<[Option<Cow<'a, str>>]>,
     #[mania("KeyImage", "D", None)]
-    pub key_images_d: Vec<Option<Cow<'a, str>>>,
+    pub key_images_d: Box<[Option<Cow<'a, str>>]>,
     #[mania("NoteImage", "", None)]
-    pub note_images: Vec<Option<Cow<'a, str>>>,
+    pub note_images: Box<[Option<Cow<'a, str>>]>,
     #[mania("NoteImage", "H", None)]
-    pub note_images_h: Vec<Option<Cow<'a, str>>>,
+    pub note_images_h: Box<[Option<Cow<'a, str>>]>,
     #[mania("NoteImage", "L", None)]
-    pub note_images_l: Vec<Option<Cow<'a, str>>>,
+    pub note_images_l: Box<[Option<Cow<'a, str>>]>,
     #[mania("NoteImage", "T", None)]
-    pub note_images_t: Vec<Option<Cow<'a, str>>>,
+    pub note_images_t: Box<[Option<Cow<'a, str>>]>,
 
     #[default(Cow::Borrowed("mania-stage-left"))]
     pub stage_left: Cow<'a, str>,
@@ -244,9 +261,9 @@ pub struct Mania<'a> {
 
     // COLORS (i will not say colours peppy cannot force me)
     #[mania("Colour", "", (0, 0, 0, 255))]
-    pub colours: Vec<ColourRgba>,
+    pub colours: Box<[ColourRgba]>,
     #[mania("ColourLight", "", (255, 255, 255, 255))]
-    pub colours_light: Vec<ColourRgba>,
+    pub colours_light: Box<[ColourRgba]>,
     #[default((255, 255, 255, 255))]
     pub colour_column_line: ColourRgba,
     #[default((255, 255, 255, 255))]
@@ -262,8 +279,8 @@ pub struct Mania<'a> {
 
     // Defaults to `key_flip_when_upside_down`
     #[mania("KeyFlipWhenUpsideDown", "", None)]
-    pub per_key_flip_when_upside_down: Vec<Option<bool>>,
-    // Actual default value depends on skin version
+    pub per_key_flip_when_upside_down: Box<[Option<bool>]>,
+    // Defaults to `true`
     #[default(None)]
     pub key_flip_when_upside_down: Option<bool>,
 
@@ -272,31 +289,31 @@ pub struct Mania<'a> {
 
     // Defaults to `note_flip_when_upside_down`
     #[mania("NoteFlipWhenUpsideDown", "", None)]
-    pub per_note_flip_when_upside_down: Vec<Option<bool>>,
+    pub per_note_flip_when_upside_down: Box<[Option<bool>]>,
     // Defaults to `true`
     #[default(None)]
     pub note_flip_when_upside_down: Option<bool>,
     // Defaults to `note_flip_when_upside_down_h`
     #[mania("NoteFlipWhenUpsideDownH", "", None)]
-    pub per_note_flip_when_upside_down_h: Vec<Option<bool>>,
+    pub per_note_flip_when_upside_down_h: Box<[Option<bool>]>,
     // Defaults to whatever the non-H logic returned
     #[default(None)]
     pub note_flip_when_upside_down_h: Option<bool>,
     // Defaults to `note_flip_when_upside_down_l`
     #[mania("NoteFlipWhenUpsideDownL", "", None)]
-    pub per_note_flip_when_upside_down_l: Vec<Option<bool>>,
+    pub per_note_flip_when_upside_down_l: Box<[Option<bool>]>,
     // Defaults to `true`
     #[default(None)]
     pub note_flip_when_upside_down_l: Option<bool>,
     // Defaults to `note_flip_when_upside_down_t`
     #[mania("NoteFlipWhenUpsideDownT", "", None)]
-    pub per_note_flip_when_upside_down_t: Vec<Option<bool>>,
+    pub per_note_flip_when_upside_down_t: Box<[Option<bool>]>,
     // Defaults to `true`
     #[default(None)]
     pub note_flip_when_upside_down_t: Option<bool>,
     // Defaults to `note_body_style`
     #[mania("NoteBodyStyle", "", None)]
-    pub per_note_body_style: Vec<Option<ManiaNoteBodyStyle>>,
+    pub per_note_body_style: Box<[Option<ManiaNoteBodyStyle>]>,
     // Defaults to `RepeatBottom`
     // (on versions < 2.5 it's always `Stretch`)
     #[default(None)]
@@ -336,11 +353,275 @@ pub struct Mania<'a> {
     pub light_frame_per_second: i32,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SkinIni<'a> {
+    pub general: General<'a>,
+    pub colours: Colours,
+    pub fonts: Fonts<'a>,
+    pub catch_the_beat: Option<CatchTheBeat>,
+    pub mania: Vec<Mania<'a>>,
+}
+
+fn parse_line<'a, T: StaticCow<'a>>(line: T) -> Option<(T, T)> {
+    if line.as_ref().starts_with("//") || line.as_ref().is_empty() {
+        return None;
+    }
+    let line = line
+        .split_once2("//")
+        .map(|(a, _b)| a.trim())
+        .unwrap_or(line);
+    if line.as_ref().contains(':') {
+        let mut line = line.split(':');
+        Some((line.next().unwrap().trim(), line.next().unwrap().trim()))
+    } else {
+        let span = line.span();
+        Some((line, T::new("", Span::new(span.end, span.end))))
+    }
+}
+
+#[derive(Copy, Clone)]
+enum Section {
+    General,
+    Colours,
+    Fonts,
+    CatchTheBeat,
+    Mania,
+}
+
+impl SkinIni<'static> {
+    pub fn parse_file(
+        file: impl io::Read + io::Seek,
+        ctx: &DeserializationContext,
+    ) -> Result<Self, ReadError> {
+        let mut file = BufReader::new(file);
+        let mut section = Some(Section::General);
+        let mut line0 = String::new();
+        let mut line1 = String::new();
+        let mut pos = 0u64;
+        let mut ret = Self::default();
+        loop {
+            let cnt = file.read_line(&mut line0)?;
+            if cnt == 0 {
+                break;
+            }
+            let line0 = line0.trim_end_matches(['\r', '\n']);
+            let line = Lended(line0, Span::new(pos, pos + line0.len() as u64));
+            pos += cnt as u64;
+            if line.as_ref().starts_with('[') {
+                let section_name = if let Some((a, _)) = line.split_once(']') {
+                    a.substr(1)
+                } else {
+                    line.trim_start_matches('[')
+                };
+                section = match section_name.as_ref() {
+                    "General" => Some(Section::General),
+                    "Colours" => Some(Section::Colours),
+                    "Fonts" => Some(Section::Fonts),
+                    "CatchTheBeat" => {
+                        if ret.catch_the_beat.is_none() {
+                            ret.catch_the_beat = Some(CatchTheBeat::default());
+                        }
+                        Some(Section::CatchTheBeat)
+                    }
+                    "Mania" => {
+                        let mut keys = 0;
+                        let mut tmp_pos = pos;
+                        loop {
+                            let cnt = file.read_line(&mut line1)?;
+                            if cnt == 0 || line1.starts_with("[") {
+                                break;
+                            }
+                            let line1 = line1.trim_end_matches(['\r', '\n']);
+                            let line =
+                                Lended(line1, Span::new(tmp_pos, tmp_pos + line1.len() as u64));
+                            tmp_pos += cnt as u64;
+                            if let Some((k, v)) =
+                                parse_line(line).filter(|(k, _)| k.as_ref() == "Keys")
+                            {
+                                match v.as_ref().parse::<u8>() {
+                                    Ok(x) => {
+                                        keys = x;
+                                    }
+                                    Err(_)
+                                        if matches!(
+                                            ctx.strictness,
+                                            ParseStrictness::IgnoreErrors
+                                        ) => {}
+                                    Err(err) => {
+                                        return Err(
+                                            ParseError::curry(k.into_cow(), v.span())(err).into()
+                                        )
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        if (keys == 0 || keys > 18)
+                            && !matches!(ctx.strictness, ParseStrictness::IgnoreErrors)
+                        {
+                            return Err(ParseError::curry(line.into_cow(), line.span())(
+                                MissingKeycountError,
+                            )
+                            .into());
+                        }
+                        file.seek(io::SeekFrom::Start(pos))?;
+                        ret.mania.push(Mania::new(keys));
+                        Some(Section::Mania)
+                    }
+                    _ if matches!(ctx.strictness, ParseStrictness::Strict) => {
+                        return Err(ParseError::curry(line.into_cow(), line.span())(
+                            UnknownSectionName,
+                        )
+                        .into());
+                    }
+                    _ => None,
+                };
+            } else if let Some(section) = section {
+                if let Some((k, v)) = parse_line(line) {
+                    match section {
+                        Section::General => ret.general.consume_line(ctx, k, v)?,
+                        Section::Colours => ret.colours.consume_line(ctx, k, v)?,
+                        Section::Fonts => ret.fonts.consume_line(ctx, k, v)?,
+                        Section::CatchTheBeat => ret
+                            .catch_the_beat
+                            .as_mut()
+                            .unwrap()
+                            .consume_line(ctx, k, v)?,
+                        Section::Mania => ret.mania.last_mut().unwrap().consume_line(ctx, k, v)?,
+                    }
+                }
+            }
+        }
+        Ok(ret)
+    }
+}
+impl<'a> SkinIni<'a> {
+    pub fn parse_str(data: &'a str, ctx: &DeserializationContext) -> Result<Self, ReadError> {
+        let mut section = Some(Section::General);
+        let mut pos = 0usize;
+        let mut ret = Self::default();
+        loop {
+            let next_pos = memchr::memchr(b'\n', data[pos..].as_bytes())
+                .map(|x| x + pos + 1)
+                .unwrap_or_else(|| data.len());
+            if next_pos == pos {
+                break;
+            }
+            let line = data[pos..next_pos].trim_end_matches(['\r', '\n']);
+            let line = Borrowed(line, Span::new(pos as u64, pos as u64 + line.len() as u64));
+            pos = next_pos;
+            if line.as_ref().starts_with('[') {
+                let section_name = if let Some((a, _b)) = line.split_once(']') {
+                    a.substr(1)
+                } else {
+                    line.trim_start_matches('[')
+                };
+                section = match section_name.as_ref() {
+                    "General" => Some(Section::General),
+                    "Colours" => Some(Section::Colours),
+                    "Fonts" => Some(Section::Fonts),
+                    "CatchTheBeat" => {
+                        if ret.catch_the_beat.is_none() {
+                            ret.catch_the_beat = Some(CatchTheBeat::default());
+                        }
+                        Some(Section::CatchTheBeat)
+                    }
+                    "Mania" => {
+                        let mut keys = 0;
+                        let mut tmp_pos = pos;
+                        loop {
+                            let next_pos = memchr::memchr(b'\n', data[tmp_pos..].as_bytes())
+                                .map(|x| x + tmp_pos + 1)
+                                .unwrap_or_else(|| data.len());
+                            if next_pos == tmp_pos {
+                                break;
+                            }
+                            let line = data[tmp_pos..next_pos].trim_end_matches(['\r', '\n']);
+                            let line = Borrowed(
+                                line,
+                                Span::new(tmp_pos as u64, tmp_pos as u64 + line.len() as u64),
+                            );
+                            tmp_pos = next_pos;
+                            if let Some((k, v)) =
+                                parse_line(line).filter(|(k, _)| k.as_ref() == "Keys")
+                            {
+                                match v.as_ref().parse::<u8>() {
+                                    Ok(x) => {
+                                        keys = x;
+                                    }
+                                    Err(_)
+                                        if matches!(
+                                            ctx.strictness,
+                                            ParseStrictness::IgnoreErrors
+                                        ) => {}
+                                    Err(err) => {
+                                        return Err(ParseError::curry(
+                                            k.into_cow().into_owned(),
+                                            v.span(),
+                                        )(err)
+                                        .into())
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        if (keys == 0 || keys > 18)
+                            && !matches!(ctx.strictness, ParseStrictness::IgnoreErrors)
+                        {
+                            return Err(ParseError::curry(
+                                line.into_cow().into_owned(),
+                                line.span(),
+                            )(MissingKeycountError)
+                            .into());
+                        }
+                        ret.mania.push(Mania::new(keys));
+                        Some(Section::Mania)
+                    }
+                    _ if matches!(ctx.strictness, ParseStrictness::Strict) => {
+                        return Err(
+                            ParseError::curry(line.into_cow().into_owned(), line.span())(
+                                UnknownSectionName,
+                            )
+                            .into(),
+                        );
+                    }
+                    _ => None,
+                };
+            } else if let Some(section) = section {
+                if let Some((k, v)) = parse_line(line) {
+                    match section {
+                        Section::General => ret.general.consume_line(ctx, k, v)?,
+                        Section::Colours => ret.colours.consume_line(ctx, k, v)?,
+                        Section::Fonts => ret.fonts.consume_line(ctx, k, v)?,
+                        Section::CatchTheBeat => ret
+                            .catch_the_beat
+                            .as_mut()
+                            .unwrap()
+                            .consume_line(ctx, k, v)?,
+                        Section::Mania => ret.mania.last_mut().unwrap().consume_line(ctx, k, v)?,
+                    }
+                }
+            }
+        }
+        Ok(ret)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::{util::Borrowed, Span};
 
     use super::*;
+
+    const DCTX: &DeserializationContext = &DeserializationContext {
+        strictness: ParseStrictness::Strict,
+    };
+
+    fn kv((k, v): (&'static str, &'static str)) -> (Borrowed<'static>, Borrowed<'static>) {
+        let k = Borrowed::new(k, Span::new(0, k.len() as u64));
+        let v = Borrowed::new(v, Span::new(0, v.len() as u64));
+        (k, v)
+    }
 
     #[test]
     fn general() {
@@ -354,14 +635,10 @@ mod test {
             ("HitCircleOverlayAboveNumer", "0"),
             ("SpinnerFrequencyModulate", "fALSe"),
             ("SpinnerFadePlayfield", "tRUe"),
-        ] {
-            general
-                .consume_line(
-                    &DeserializationContext { strict: true },
-                    k,
-                    Borrowed(v, Span::new(0, v.len())),
-                )
-                .unwrap();
+        ]
+        .map(kv)
+        {
+            general.consume_line(DCTX, k, v).unwrap();
         }
         assert_eq!(general.name, "test");
         assert_eq!(general.author, "test");
@@ -381,14 +658,10 @@ mod test {
             ("Combo8", "4,5,6"),
             ("Triangle0", "1,2,3"),
             ("Triangle1", "2,3,4,5"),
-        ] {
-            colours
-                .consume_line(
-                    &DeserializationContext { strict: true },
-                    k,
-                    Borrowed(v, Span::new(0, v.len())),
-                )
-                .unwrap();
+        ]
+        .map(kv)
+        {
+            colours.consume_line(DCTX, k, v).unwrap();
         }
         assert_eq!(colours.combo1, (1, 2, 3));
         assert_eq!(colours.combo2, (0, 202, 0));
@@ -398,21 +671,45 @@ mod test {
 
     #[test]
     fn mania() {
-        let mut mania = Mania::default_for(4);
-        assert_eq!(mania.column_line_width, &[2., 2., 2., 2.]);
-        for (k, v) in [("ColumnLineWidth", "1,2,3,4"), ("KeyImage3D", "abc")] {
-            mania
-                .consume_line(
-                    &DeserializationContext { strict: true },
-                    k,
-                    Borrowed(v, Span::new(0, v.len())),
-                )
-                .unwrap();
+        let mut mania = Mania::new(4);
+        assert_eq!(*mania.column_line_width, [2., 2., 2., 2.]);
+        for (k, v) in [("ColumnLineWidth", "1,2,3,4"), ("KeyImage3D", "abc")].map(kv) {
+            mania.consume_line(DCTX, k, v).unwrap();
         }
-        assert_eq!(mania.column_line_width, &[1., 2., 3., 4.]);
+        assert_eq!(*mania.column_line_width, [1., 2., 3., 4.]);
         assert_eq!(
-            mania.key_images_d,
-            &[None, None, Some(Cow::Borrowed("abc")), None]
+            *mania.key_images_d,
+            [None, None, Some(Cow::Borrowed("abc")), None]
         );
+    }
+
+    #[test]
+    fn skin() {
+        let s = "Name:test
+[[[General
+//test
+Author:  a // test
+Version: 2
+SliderStyle: 4
+
+[Colours]]abjioja]]
+Combo1 : 1,2,3
+[Fonts]
+ScoreOverlap: -3
+[Mania]
+Keys: 4
+ColumnStart: 123
+[Mania]
+Keys: 5
+";
+        eprintln!("{s:?}");
+        let w = SkinIni::parse_str(s, DCTX).unwrap();
+        let q = SkinIni::parse_file(std::io::Cursor::new(s.as_bytes()), DCTX).unwrap();
+        assert_eq!(q.general, w.general);
+        assert_eq!(q.colours, w.colours);
+        assert_eq!(q.fonts, w.fonts);
+        assert_eq!(q.catch_the_beat, w.catch_the_beat);
+        assert_eq!(q.mania, w.mania);
+        // assert_eq!(w)
     }
 }

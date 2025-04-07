@@ -22,7 +22,7 @@ pub trait ParseField<'a>: Sized {
         name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError<'static>>;
+    ) -> Result<Self, ParseError>;
 }
 
 macro_rules! impl_parse_field {
@@ -32,7 +32,7 @@ macro_rules! impl_parse_field {
                 name: impl Into<Cow<'static, str>>,
                 _ctx: &Context,
                 line: impl StaticCow<'a>,
-            ) -> Result<Self, ParseError<'static>> {
+            ) -> Result<Self, ParseError> {
                 line.as_ref().parse().map_err(ParseError::curry(name, line.span()))
             }
         })*
@@ -49,7 +49,7 @@ impl<'a, T: ParseField<'a>> BeatmapSection<'a> for Vec<T> {
         &mut self,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Option<Section>, ParseError<'static>> {
+    ) -> Result<Option<Section>, ParseError> {
         self.push(ParseField::parse_field("", ctx, line)?);
         Ok(None)
     }
@@ -62,7 +62,7 @@ impl<'a, T: Copy + Clone + From<i8> + Add<T, Output = T> + Sub<T, Output = T> + 
         name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError<'static>> {
+    ) -> Result<Self, ParseError> {
         Ok(Self::new(
             ParseField::parse_field(name, ctx, line)?,
             ctx.version,
@@ -75,7 +75,7 @@ impl<'a> ParseField<'a> for Vec<i32> {
         name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError<'static>> {
+    ) -> Result<Self, ParseError> {
         let mut ret = vec![];
         let name = name.into();
         for val in line.split(',') {
@@ -92,7 +92,7 @@ impl<'a> ParseField<'a> for bool {
         name: impl Into<Cow<'static, str>>,
         _ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError<'static>> {
+    ) -> Result<Self, ParseError> {
         match line.as_ref().bytes().next() {
             Some(b'1') => Ok(true),
             Some(_) => Ok(false),
@@ -106,7 +106,7 @@ impl<'a> ParseField<'a> for TimingPoint {
         _name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError<'static>> {
+    ) -> Result<Self, ParseError> {
         let mut end_span = line.span();
         end_span.start = end_span.end;
         let mut s = line.split(',');
@@ -173,7 +173,7 @@ impl<'a> ParseField<'a> for HitObject<'a> {
         _name: impl Into<Cow<'static, str>>,
         ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError<'static>> {
+    ) -> Result<Self, ParseError> {
         let mut end_span = line.span();
         end_span.start = end_span.end;
         let mut s = line.split(',');
@@ -393,7 +393,7 @@ impl<'a> ParseField<'a> for EventTrigger {
         name: impl Into<Cow<'static, str>>,
         _ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError<'static>> {
+    ) -> Result<Self, ParseError> {
         match line.as_ref() {
             "Passing" => Ok(Self::Passing),
             "Failing" => Ok(Self::Failing),
@@ -489,7 +489,7 @@ impl<'a> ParseField<'a> for Cow<'a, str> {
         _name: impl Into<Cow<'static, str>>,
         _ctx: &Context,
         line: impl StaticCow<'a>,
-    ) -> Result<Self, ParseError<'static>> {
+    ) -> Result<Self, ParseError> {
         Ok(line.into_cow())
     }
 }
