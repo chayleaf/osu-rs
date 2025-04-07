@@ -2,14 +2,14 @@
 
 use std::{
     borrow::Cow,
-    io::{self, BufRead, BufReader, Seek},
+    io::{self, BufRead, BufReader, Seek, Write},
 };
 
 use osu_rs_derive::{SkinEnum, SkinSection};
 
 use crate::{
     beatmap::ReadError,
-    parsers::skin::{ParseField, ParseFieldInPlace},
+    parsers::skin::{ParseField, ParseFieldInPlace, SerializeBox, SerializeField},
     util::{Borrowed, Lended, StaticCow},
     EnumParseError, IntEnumParseError, MissingKeycountError, ParseError, RecordParseError, Span,
     UnknownSectionName,
@@ -17,10 +17,6 @@ use crate::{
 
 pub type ColourRgb = (u8, u8, u8);
 pub type ColourRgba = (u8, u8, u8, u8);
-
-pub struct SerializationContext {
-    pub compact: bool,
-}
 
 pub enum ParseStrictness {
     Strict,
@@ -87,7 +83,6 @@ pub struct General<'a> {
     #[default(false)]
     pub combo_burst_random: bool,
     #[default(SliderStyle::MmSliders)]
-    #[to(i32)]
     pub slider_style: SliderStyle,
     /// Latest version if None
     #[version]
@@ -589,6 +584,62 @@ impl<'a> SkinIni<'a> {
         }
         Ok(ret)
     }
+    pub fn serialize_compact(&self, out: impl io::Write) -> io::Result<()> {
+        let Self {
+            general,
+            colours,
+            fonts,
+            catch_the_beat,
+            mania,
+        } = self;
+        let mut out = io::BufWriter::new(out);
+        general.serialize_compact(&mut out, general.version)?;
+        if colours.should_write_compact(general.version) {
+            writeln!(out, "[Colours")?;
+            colours.serialize_compact(&mut out, general.version)?;
+        }
+        if fonts.should_write_compact(general.version) {
+            writeln!(out, "[Fonts")?;
+            fonts.serialize_compact(&mut out, general.version)?;
+        }
+        if catch_the_beat.should_write_compact(general.version) {
+            writeln!(out, "[CatchTheBeat")?;
+            catch_the_beat.serialize_compact(&mut out, general.version)?;
+        }
+        let mut encountered = [false; 19];
+        for mania in mania {
+            let skip = encountered[mania.keys as usize];
+            encountered[mania.keys as usize] = true;
+            if !skip && mania.should_write_compact(general.version) {
+                writeln!(out, "[Mania")?;
+                mania.serialize_compact(&mut out, general.version)?;
+            }
+        }
+        Ok(())
+    }
+    pub fn serialize(&self, out: impl io::Write) -> io::Result<()> {
+        let Self {
+            general,
+            colours,
+            fonts,
+            catch_the_beat,
+            mania,
+        } = self;
+        let mut out = io::BufWriter::new(out);
+        write!(out, "[General]\r\n")?;
+        general.serialize(&mut out, general.version)?;
+        write!(out, "\r\n[Colours]\r\n")?;
+        colours.serialize(&mut out, general.version)?;
+        write!(out, "\r\n[Fonts]\r\n")?;
+        fonts.serialize(&mut out, general.version)?;
+        write!(out, "\r\n[CatchTheBeat]\r\n")?;
+        catch_the_beat.serialize(&mut out, general.version)?;
+        for mania in mania {
+            write!(out, "\r\n[Mania]\r\n")?;
+            mania.serialize(&mut out, general.version)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -605,6 +656,31 @@ mod test {
         let k = Borrowed::new(k, Span::new(0, k.len() as u64));
         let v = Borrowed::new(v, Span::new(0, v.len() as u64));
         (k, v)
+    }
+
+    fn roundtrip(skin: &SkinIni) {
+        let mut a = Vec::<u8>::new();
+        let mut b = Vec::<u8>::new();
+        skin.serialize(&mut a).unwrap();
+        skin.serialize_compact(&mut b).unwrap();
+        for x in [a, b] {
+            let s = String::from_utf8(x).unwrap();
+            let a = SkinIni::parse_file(std::io::Cursor::new(s.as_bytes()), DCTX).unwrap();
+            let b = SkinIni::parse_str(&s, DCTX).unwrap();
+            eprintln!("checking file/non-file equivalence");
+            assert_eq!(a, b);
+            eprintln!("checking roundtrip equivalence: {s:?}");
+            assert_eq!(skin.general, a.general);
+            assert_eq!(skin.colours, a.colours);
+            assert_eq!(skin.fonts, a.fonts);
+            assert_eq!(skin.catch_the_beat, a.catch_the_beat);
+            for i in 0..19 {
+                assert_eq!(
+                    skin.mania.iter().find(|x| x.keys == i).cloned().unwrap_or_else(|| Mania::new(i)),
+                    a.mania.iter().find(|x| x.keys == i).cloned().unwrap_or_else(|| Mania::new(i)),
+                );
+            }
+        }
     }
 
     #[test]
@@ -673,11 +749,12 @@ mod test {
 [[[General
 //test
 Author:  a // test
-Version: 2
+Version: latest
 SliderStyle: 4
 
 [Colours]]abjioja]]
-Combo1 : 1,2,3
+Combo1 : 1,2,3,4
+Combo2 : 1,2,3
 [Fonts]
 ScoreOverlap: -3
 [Mania]
@@ -687,6 +764,8 @@ ColumnStart: 123
 Keys: 5
 [General
 Author: the actual author
+HitCircleOverlayAboveNumer:0
+CustomComboBurstSounds:0
 ";
         eprintln!("{s:?}");
         let q = SkinIni::parse_file(std::io::Cursor::new(s.as_bytes()), DCTX).unwrap();
@@ -694,7 +773,7 @@ Author: the actual author
         assert_eq!(q, w);
         assert_eq!(q.general.name, "test");
         assert_eq!(q.general.author, "the actual author");
-        assert_eq!(q.general.version, Some(2.0));
+        assert_eq!(q.general.version, None);
         assert_eq!(q.general.slider_style, SliderStyle::OpenGlSliders);
         assert_eq!(q.colours.combo1, (1, 2, 3));
         assert_eq!(q.fonts.score_overlap, -3);
@@ -702,5 +781,6 @@ Author: the actual author
         assert_eq!(q.mania[0].column_start, 123.0);
         assert_eq!(q.mania[1].keys, 5);
         assert_eq!(q.mania[1].column_start, 136.0);
+        roundtrip(&q);
     }
 }

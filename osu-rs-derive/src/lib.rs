@@ -168,7 +168,6 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
     let input: DeriveInput = syn::parse2(input).unwrap();
     struct FieldInfo {
         kind: FieldKind,
-        to_i32: bool,
         aliases: Vec<TokenStream>,
     }
     enum FieldKind {
@@ -191,7 +190,6 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
     for field in named.named {
         let mut aliases = vec![];
         let mut kind = None;
-        let mut to_i32 = false;
         for attr in field.attrs {
             match attr.meta.path().to_token_stream().to_string().as_str() {
                 "skip" => {
@@ -244,19 +242,6 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                     }
                     _ => panic!("#[derive(SkinSection)]: non-Meta::List"),
                 },
-                "to" => match attr.meta {
-                    Meta::List(x) => {
-                        let mut tokens = x.tokens.into_iter();
-                        let ty = tokens.next();
-                        if let Some(ty) = ty {
-                            let ty = ty.to_string();
-                            assert_eq!(ty, "i32");
-                            to_i32 = true;
-                            assert!(tokens.next().is_none());
-                        }
-                    }
-                    _ => panic!("#[derive(SkinSection)]: non-Meta::List"),
-                },
                 "number_with_prefix" => match attr.meta {
                     Meta::List(x) => {
                         assert!(kind.is_none());
@@ -276,11 +261,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
         assert!(fields
             .insert(
                 field.ident.expect("field ident"),
-                FieldInfo {
-                    kind,
-                    aliases,
-                    to_i32
-                }
+                FieldInfo { kind, aliases }
             )
             .is_none());
     }
@@ -289,6 +270,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
     let mut default_fields = TokenStream::new();
     let mut ser = TokenStream::new();
     let mut ser_compact = TokenStream::new();
+    let mut chk_compact = TokenStream::new();
     for (name, info) in fields {
         let name_camel = name
             .to_string()
@@ -309,7 +291,13 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
             .collect::<Vec<_>>()
             .join("");
         let lit = syn::LitStr::new(&name_camel, proc_macro2::Span::call_site()).into_token_stream();
+        let mut shortest_alias = name_camel.clone();
         for lit in [lit].into_iter().chain(info.aliases) {
+            let parsed: syn::LitStr = syn::parse2(lit.clone()).unwrap();
+            let parsed = parsed.value();
+            if parsed.len() < shortest_alias.len() {
+                shortest_alias = parsed;
+            }
             match info.kind {
                 FieldKind::Skip => {
                     match_fields.extend(quote! {
@@ -365,24 +353,185 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                 }
             }
         }
+        let ser_lit =
+            syn::LitStr::new(&(name_camel.clone() + ": "), proc_macro2::Span::call_site())
+                .into_token_stream();
+        let ser_compact_lit =
+            syn::LitStr::new(&(name_camel.clone() + ":"), proc_macro2::Span::call_site())
+                .into_token_stream();
         match info.kind {
-            FieldKind::Skip => {}
+            FieldKind::Skip => {
+                ser.extend(quote! {
+                    if self.#name.should_serialize() {
+                        write!(out, #ser_lit)?;
+                        self.#name.serialize(out)?;
+                        write!(out, "\r\n")?;
+                    }
+                });
+                ser_compact.extend(quote! {
+                    if self.#name.should_serialize() {
+                        write!(out, #ser_compact_lit)?;
+                        self.#name.serialize_compact(out)?;
+                        writeln!(out)?;
+                    }
+                });
+            }
             FieldKind::Version => {
+                let ser_lit_latest = syn::LitStr::new(
+                    &(name_camel.clone() + ": latest\r\n"),
+                    proc_macro2::Span::call_site(),
+                )
+                .into_token_stream();
+                let ser_compact_lit_latest = syn::LitStr::new(
+                    &(name_camel.clone() + ":latest"),
+                    proc_macro2::Span::call_site(),
+                )
+                .into_token_stream();
+                ser.extend(quote! {
+                    if let Some(ver) = self.#name {
+                        write!(out, #ser_lit)?;
+                        ver.serialize(out)?;
+                        write!(out, "\r\n")?;
+                    } else {
+                        write!(out, #ser_lit_latest)?;
+                    }
+                });
+                ser_compact.extend(quote! {
+                    if let Some(ver) = self.#name {
+                        if ver != 1.0 {
+                            write!(out, #ser_compact_lit)?;
+                            ver.serialize_compact(out)?;
+                            writeln!(out)?;
+                        }
+                    } else {
+                        writeln!(out, #ser_compact_lit_latest)?;
+                    }
+                });
+                chk_compact.extend(quote! {
+                    if self.#name != Some(1.0) {
+                        return true;
+                    }
+                });
                 default_fields.extend(quote! {
                     #name: Some(1.0),
                 });
             }
             FieldKind::Default(def) => {
+                ser.extend(quote! {
+                    if self.#name.should_serialize() {
+                        write!(out, #ser_lit)?;
+                        self.#name.serialize(out)?;
+                        write!(out, "\r\n")?;
+                    }
+                });
+                ser_compact.extend(quote! {
+                    if self.#name != #def && self.#name.should_serialize() {
+                        write!(out, #ser_compact_lit)?;
+                        self.#name.serialize_compact(out)?;
+                        writeln!(out)?;
+                    }
+                });
+                chk_compact.extend(quote! {
+                    if self.#name != #def && self.#name.should_serialize() {
+                        return true;
+                    }
+                });
                 default_fields.extend(quote! {
                     #name: #def,
                 });
             }
             FieldKind::NumPrefix(_) => {
+                let ser_lit_num = syn::LitStr::new(
+                    &(name_camel.clone() + "{}: "),
+                    proc_macro2::Span::call_site(),
+                )
+                .into_token_stream();
+                let ser_compact_lit_num = syn::LitStr::new(
+                    &(name_camel.clone() + "{}:"),
+                    proc_macro2::Span::call_site(),
+                )
+                .into_token_stream();
+                ser.extend(quote! {
+                    for (i, x) in self.#name.iter().enumerate() {
+                        write!(out, #ser_lit_num, i)?;
+                        x.serialize(out)?;
+                        write!(out, "\r\n")?;
+                    }
+                });
+                ser_compact.extend(quote! {
+                    for (i, x) in self.#name.iter().enumerate() {
+                        write!(out, #ser_compact_lit_num, i % 10)?;
+                        x.serialize_compact(out)?;
+                        writeln!(out)?;
+                    }
+                });
+                chk_compact.extend(quote! {
+                    if !self.#name.is_empty() {
+                        return true;
+                    }
+                });
                 default_fields.extend(quote! {
                     #name: vec![],
                 });
             }
-            FieldKind::Mania(def, _) => {
+            FieldKind::Mania(def, None) => {
+                ser.extend(quote! {
+                    if self.#name.should_serialize_box() {
+                        write!(out, #ser_lit)?;
+                        self.#name.serialize_box(out)?;
+                        write!(out, "\r\n")?;
+                    }
+                });
+                ser_compact.extend(quote! {
+                    if self.#name.should_serialize_box() && self.#name.iter().any(|x| *x != #def) {
+                        write!(out, #ser_compact_lit)?;
+                        self.#name.serialize_compact_box(out, #def)?;
+                        writeln!(out)?;
+                    }
+                });
+                chk_compact.extend(quote! {
+                    if self.#name.should_serialize_box() && self.#name.iter().any(|x| *x != #def) {
+                        return true;
+                    }
+                });
+                default_fields.extend(quote! {
+                    #name: vec![#def; keys as usize].into(),
+                });
+            }
+            FieldKind::Mania(def, Some((pre, post))) => {
+                let ser_lit_mania = syn::LitStr::new(
+                    &(pre.clone() + "{}" + &post + ": "),
+                    proc_macro2::Span::call_site(),
+                )
+                .into_token_stream();
+                let ser_compact_lit_mania = syn::LitStr::new(
+                    &(pre.clone() + "{}" + &post + ":"),
+                    proc_macro2::Span::call_site(),
+                )
+                .into_token_stream();
+                ser.extend(quote! {
+                    for (i, x) in self.#name.iter().enumerate() {
+                        if x.should_serialize() {
+                            write!(out, #ser_lit_mania, i + 1)?;
+                            x.serialize(out)?;
+                            write!(out, "\r\n")?;
+                        }
+                    }
+                });
+                ser_compact.extend(quote! {
+                    for (i, x) in self.#name.iter().enumerate() {
+                        if *x != #def && x.should_serialize() {
+                            write!(out, #ser_compact_lit_mania, i + 1)?;
+                            x.serialize_compact(out)?;
+                            writeln!(out)?;
+                        }
+                    }
+                });
+                chk_compact.extend(quote! {
+                    if self.#name.iter().any(|x| *x != #def && x.should_serialize()) {
+                        return true;
+                    }
+                });
                 default_fields.extend(quote! {
                     #name: vec![#def; keys as usize].into(),
                 });
@@ -425,13 +574,17 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                         #default_fields
                     }
                 }
-                fn serialize(&self, out: impl io::Write) -> io::Result<()> {
+                fn serialize(&self, out: &mut impl io::Write, version: Option<f64>) -> io::Result<()> {
                     #ser
                     Ok(())
                 }
-                fn serialize_compact(&self, out: impl io::Write) -> io::Result<()> {
+                fn serialize_compact(&self, out: &mut impl io::Write, version: Option<f64>) -> io::Result<()> {
                     #ser_compact
                     Ok(())
+                }
+                fn should_write_compact(&self, version: Option<f64>) -> bool {
+                    #chk_compact
+                    false
                 }
             }
         });
@@ -445,13 +598,17 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                 }
             }
             impl #generics #name #generics {
-                fn serialize(&self, out: impl io::Write) -> io::Result<()> {
+                fn serialize(&self, out: &mut impl io::Write, version: Option<f64>) -> io::Result<()> {
                     #ser
                     Ok(())
                 }
-                fn serialize_compact(&self, out: impl io::Write) -> io::Result<()> {
+                fn serialize_compact(&self, out: &mut impl io::Write, version: Option<f64>) -> io::Result<()> {
                     #ser_compact
                     Ok(())
+                }
+                fn should_write_compact(&self, version: Option<f64>) -> bool {
+                    #chk_compact
+                    false
                 }
             }
         });
