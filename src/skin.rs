@@ -400,6 +400,7 @@ impl SkinIni<'static> {
         let mut pos = 0u64;
         let mut ret = Self::default();
         loop {
+            line0.clear();
             let cnt = file.read_line(&mut line0)?;
             if cnt == 0 {
                 break;
@@ -427,6 +428,7 @@ impl SkinIni<'static> {
                         let mut keys = 0;
                         let mut tmp_pos = pos;
                         loop {
+                            line1.clear();
                             let cnt = file.read_line(&mut line1)?;
                             if cnt == 0 || line1.starts_with("[") {
                                 break;
@@ -511,7 +513,7 @@ impl<'a> SkinIni<'a> {
             let line = Borrowed(line, Span::new(pos as u64, pos as u64 + line.len() as u64));
             pos = next_pos;
             if line.as_ref().starts_with('[') {
-                let section_name = if let Some((a, _b)) = line.split_once(']') {
+                let section_name = if let Some((a, _)) = line.split_once(']') {
                     a.substr(1)
                 } else {
                     line.trim_start_matches('[')
@@ -685,7 +687,7 @@ mod test {
 
     #[test]
     fn skin() {
-        let s = "Name:test
+        let s = "Name:test  
 [[[General
 //test
 Author:  a // test
@@ -701,15 +703,22 @@ Keys: 4
 ColumnStart: 123
 [Mania]
 Keys: 5
+[General
+Author: the actual author
 ";
         eprintln!("{s:?}");
-        let w = SkinIni::parse_str(s, DCTX).unwrap();
         let q = SkinIni::parse_file(std::io::Cursor::new(s.as_bytes()), DCTX).unwrap();
-        assert_eq!(q.general, w.general);
-        assert_eq!(q.colours, w.colours);
-        assert_eq!(q.fonts, w.fonts);
-        assert_eq!(q.catch_the_beat, w.catch_the_beat);
-        assert_eq!(q.mania, w.mania);
-        // assert_eq!(w)
+        let w = SkinIni::parse_str(s, DCTX).unwrap();
+        assert_eq!(q, w);
+        assert_eq!(q.general.name, "test");
+        assert_eq!(q.general.author, "the actual author");
+        assert_eq!(q.general.version, Some(2.0));
+        assert_eq!(q.general.slider_style, SliderStyle::OpenGlSliders);
+        assert_eq!(q.colours.combo1, (1, 2, 3));
+        assert_eq!(q.fonts.score_overlap, -3);
+        assert_eq!(q.mania[0].keys, 4);
+        assert_eq!(q.mania[0].column_start, 123.0);
+        assert_eq!(q.mania[1].keys, 5);
+        assert_eq!(q.mania[1].column_start, 136.0);
     }
 }
