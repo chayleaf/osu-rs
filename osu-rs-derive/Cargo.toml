@@ -1,6 +1,6 @@
 [package]
 name = "osu-rs-derive"
-version = "0.2.0-alpha.0"
+version = "0.2.0-alpha.1"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true

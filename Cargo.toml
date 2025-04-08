@@ -1,6 +1,6 @@
 [package]
 name = "osu-rs"
-version = "0.3.0-alpha.0"
+version = "0.3.0-alpha.1"
 edition.workspace = true
 readme = "README.md"
 authors.workspace = true
@@ -22,6 +22,6 @@ license = "MIT"
 
 [dependencies]
 thiserror = "2.0.3"
-osu-rs-derive = { version = "0.2.0-alpha", path = "./osu-rs-derive" }
+osu-rs-derive = { version = "0.2.0-alpha.1", path = "./osu-rs-derive" }
 bitflags = "2.6.0"
 memchr = "2.7.4"

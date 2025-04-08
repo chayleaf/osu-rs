@@ -20,20 +20,18 @@ use crate::{
 pub type ColourRgb = (u8, u8, u8);
 pub type ColourRgba = (u8, u8, u8, u8);
 
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord)]
 pub enum ParseStrictness {
-    Strict,
-    IgnoreUnknownKeys,
+    #[default]
     IgnoreErrors,
-}
-
-pub struct DeserializationContext {
-    pub strictness: ParseStrictness,
+    IgnoreUnknownKeys,
+    Strict,
 }
 
 trait SkinSection<'a> {
     fn consume_line(
         &mut self,
-        ctx: &DeserializationContext,
+        ctx: ParseStrictness,
         key: impl StaticCow<'a>,
         value: impl StaticCow<'a>,
     ) -> Result<(), ParseError>;
@@ -388,7 +386,7 @@ enum Section {
 impl SkinIni<'static> {
     pub fn parse_file(
         file: impl io::Read + io::Seek,
-        ctx: &DeserializationContext,
+        strictness: ParseStrictness,
     ) -> Result<Self, ReadError> {
         let mut file = BufReader::new(file);
         let mut section = Some(Section::General);
@@ -436,11 +434,7 @@ impl SkinIni<'static> {
                                     Ok(x) => {
                                         keys = x;
                                     }
-                                    Err(_)
-                                        if matches!(
-                                            ctx.strictness,
-                                            ParseStrictness::IgnoreErrors
-                                        ) => {}
+                                    Err(_) if strictness <= ParseStrictness::IgnoreErrors => {}
                                     Err(err) => {
                                         return Err(
                                             ParseError::curry(k.into_cow(), v.span())(err).into()
@@ -450,9 +444,7 @@ impl SkinIni<'static> {
                                 break;
                             }
                         }
-                        if (keys == 0 || keys > 18)
-                            && !matches!(ctx.strictness, ParseStrictness::IgnoreErrors)
-                        {
+                        if (keys == 0 || keys > 18) && strictness > ParseStrictness::IgnoreErrors {
                             return Err(ParseError::curry(line.into_cow(), line.span())(
                                 MissingKeycountError,
                             )
@@ -462,7 +454,7 @@ impl SkinIni<'static> {
                         ret.mania.push(Mania::new(keys));
                         Some(Section::Mania)
                     }
-                    _ if matches!(ctx.strictness, ParseStrictness::Strict) => {
+                    _ if strictness > ParseStrictness::IgnoreUnknownKeys => {
                         return Err(ParseError::curry(line.into_cow(), line.span())(
                             UnknownSectionName,
                         )
@@ -473,11 +465,17 @@ impl SkinIni<'static> {
             } else if let Some(section) = section {
                 if let Some((k, v)) = parse_line(line) {
                     match section {
-                        Section::General => ret.general.consume_line(ctx, k, v)?,
-                        Section::Colours => ret.colours.consume_line(ctx, k, v)?,
-                        Section::Fonts => ret.fonts.consume_line(ctx, k, v)?,
-                        Section::CatchTheBeat => ret.catch_the_beat.consume_line(ctx, k, v)?,
-                        Section::Mania => ret.mania.last_mut().unwrap().consume_line(ctx, k, v)?,
+                        Section::General => ret.general.consume_line(strictness, k, v)?,
+                        Section::Colours => ret.colours.consume_line(strictness, k, v)?,
+                        Section::Fonts => ret.fonts.consume_line(strictness, k, v)?,
+                        Section::CatchTheBeat => {
+                            ret.catch_the_beat.consume_line(strictness, k, v)?
+                        }
+                        Section::Mania => ret
+                            .mania
+                            .last_mut()
+                            .unwrap()
+                            .consume_line(strictness, k, v)?,
                     }
                 }
             }
@@ -486,7 +484,7 @@ impl SkinIni<'static> {
     }
 }
 impl<'a> SkinIni<'a> {
-    pub fn parse_str(data: &'a str, ctx: &DeserializationContext) -> Result<Self, ReadError> {
+    pub fn parse_str(data: &'a str, strictness: ParseStrictness) -> Result<Self, ReadError> {
         let mut section = Some(Section::General);
         let mut pos = 0usize;
         let mut ret = Self::default();
@@ -534,11 +532,7 @@ impl<'a> SkinIni<'a> {
                                     Ok(x) => {
                                         keys = x;
                                     }
-                                    Err(_)
-                                        if matches!(
-                                            ctx.strictness,
-                                            ParseStrictness::IgnoreErrors
-                                        ) => {}
+                                    Err(_) if strictness <= ParseStrictness::IgnoreErrors => {}
                                     Err(err) => {
                                         return Err(ParseError::curry(
                                             k.into_cow().into_owned(),
@@ -550,9 +544,7 @@ impl<'a> SkinIni<'a> {
                                 break;
                             }
                         }
-                        if (keys == 0 || keys > 18)
-                            && !matches!(ctx.strictness, ParseStrictness::IgnoreErrors)
-                        {
+                        if (keys == 0 || keys > 18) && strictness > ParseStrictness::IgnoreErrors {
                             return Err(ParseError::curry(
                                 line.into_cow().into_owned(),
                                 line.span(),
@@ -562,7 +554,7 @@ impl<'a> SkinIni<'a> {
                         ret.mania.push(Mania::new(keys));
                         Some(Section::Mania)
                     }
-                    _ if matches!(ctx.strictness, ParseStrictness::Strict) => {
+                    _ if strictness > ParseStrictness::IgnoreUnknownKeys => {
                         return Err(
                             ParseError::curry(line.into_cow().into_owned(), line.span())(
                                 UnknownSectionName,
@@ -575,11 +567,17 @@ impl<'a> SkinIni<'a> {
             } else if let Some(section) = section {
                 if let Some((k, v)) = parse_line(line) {
                     match section {
-                        Section::General => ret.general.consume_line(ctx, k, v)?,
-                        Section::Colours => ret.colours.consume_line(ctx, k, v)?,
-                        Section::Fonts => ret.fonts.consume_line(ctx, k, v)?,
-                        Section::CatchTheBeat => ret.catch_the_beat.consume_line(ctx, k, v)?,
-                        Section::Mania => ret.mania.last_mut().unwrap().consume_line(ctx, k, v)?,
+                        Section::General => ret.general.consume_line(strictness, k, v)?,
+                        Section::Colours => ret.colours.consume_line(strictness, k, v)?,
+                        Section::Fonts => ret.fonts.consume_line(strictness, k, v)?,
+                        Section::CatchTheBeat => {
+                            ret.catch_the_beat.consume_line(strictness, k, v)?
+                        }
+                        Section::Mania => ret
+                            .mania
+                            .last_mut()
+                            .unwrap()
+                            .consume_line(strictness, k, v)?,
                     }
                 }
             }
@@ -648,9 +646,7 @@ impl<'a> SkinIni<'a> {
 mod test {
     use super::*;
 
-    const DCTX: &DeserializationContext = &DeserializationContext {
-        strictness: ParseStrictness::Strict,
-    };
+    const STRICTNESS: ParseStrictness = ParseStrictness::Strict;
 
     fn kv((k, v): (&'static str, &'static str)) -> (Borrowed<'static>, Borrowed<'static>) {
         let k = Borrowed::new(k, Span::new(0, k.len() as u64));
@@ -665,8 +661,8 @@ mod test {
         skin.serialize_compact(&mut b).unwrap();
         for x in [a, b] {
             let s = String::from_utf8(x).unwrap();
-            let a = SkinIni::parse_file(std::io::Cursor::new(s.as_bytes()), DCTX).unwrap();
-            let b = SkinIni::parse_str(&s, DCTX).unwrap();
+            let a = SkinIni::parse_file(std::io::Cursor::new(s.as_bytes()), STRICTNESS).unwrap();
+            let b = SkinIni::parse_str(&s, STRICTNESS).unwrap();
             eprintln!("checking file/non-file equivalence");
             assert_eq!(a, b);
             eprintln!("checking roundtrip equivalence: {s:?}");
@@ -706,7 +702,7 @@ mod test {
         ]
         .map(kv)
         {
-            general.consume_line(DCTX, k, v).unwrap();
+            general.consume_line(STRICTNESS, k, v).unwrap();
         }
         assert_eq!(general.name, "test");
         assert_eq!(general.author, "test");
@@ -729,7 +725,7 @@ mod test {
         ]
         .map(kv)
         {
-            colours.consume_line(DCTX, k, v).unwrap();
+            colours.consume_line(STRICTNESS, k, v).unwrap();
         }
         assert_eq!(colours.combo1, (1, 2, 3));
         assert_eq!(colours.combo2, (0, 202, 0));
@@ -742,7 +738,7 @@ mod test {
         let mut mania = Mania::new(4);
         assert_eq!(*mania.column_line_width, [2., 2., 2., 2.]);
         for (k, v) in [("ColumnLineWidth", "1,2,3,4"), ("KeyImage3D", "abc")].map(kv) {
-            mania.consume_line(DCTX, k, v).unwrap();
+            mania.consume_line(STRICTNESS, k, v).unwrap();
         }
         assert_eq!(*mania.column_line_width, [1., 2., 3., 4.]);
         assert_eq!(
@@ -776,8 +772,8 @@ HitCircleOverlayAboveNumer:0
 CustomComboBurstSounds:0
 ";
         eprintln!("{s:?}");
-        let q = SkinIni::parse_file(std::io::Cursor::new(s.as_bytes()), DCTX).unwrap();
-        let w = SkinIni::parse_str(s, DCTX).unwrap();
+        let q = SkinIni::parse_file(std::io::Cursor::new(s.as_bytes()), STRICTNESS).unwrap();
+        let w = SkinIni::parse_str(s, STRICTNESS).unwrap();
         assert_eq!(q, w);
         assert_eq!(q.general.name, "test");
         assert_eq!(q.general.author, "the actual author");

@@ -541,7 +541,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
     let name_str = LitStr::new(&(name.to_string() + " section"), Span::call_site());
     let extra_handler = quote! {
         {
-            if matches!(ctx.strictness, ParseStrictness::IgnoreUnknownKeys) {
+            if strictness <= ParseStrictness::IgnoreUnknownKeys {
                 Ok(())
             } else {
                 Err(ParseError::curry(#name_str, value.span())(RecordParseError {
@@ -554,7 +554,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
         impl<'a> SkinSection<'a> for #name #generics {
             fn consume_line(
                 &mut self,
-                ctx: &DeserializationContext,
+                strictness: ParseStrictness,
                 key: impl StaticCow<'a>,
                 value: impl StaticCow<'a>
             ) -> Result<(), ParseError> {
