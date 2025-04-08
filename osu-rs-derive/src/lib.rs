@@ -178,7 +178,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
         NumPrefix(String),
     }
     let mut mania = false;
-    let mut fields = HashMap::<Ident, FieldInfo>::new();
+    let mut fields = Vec::<(Ident, FieldInfo)>::new();
     let name = input.ident;
     let generics = input.generics;
     let Data::Struct(data) = input.data else {
@@ -258,19 +258,17 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
             }
         }
         let kind = kind.unwrap();
-        assert!(fields
-            .insert(
-                field.ident.expect("field ident"),
-                FieldInfo { kind, aliases }
-            )
-            .is_none());
+        fields.push((
+            field.ident.expect("field ident"),
+            FieldInfo { kind, aliases },
+        ));
     }
     let mut match_fields = TokenStream::new();
     let mut valid_fields = TokenStream::new();
     let mut default_fields = TokenStream::new();
     let mut ser = TokenStream::new();
     let mut ser_compact = TokenStream::new();
-    let mut chk_compact = TokenStream::new();
+    let mut chk = TokenStream::new();
     for (name, info) in fields {
         let name_camel = name
             .to_string()
@@ -407,7 +405,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                         writeln!(out, #ser_compact_lit_latest)?;
                     }
                 });
-                chk_compact.extend(quote! {
+                chk.extend(quote! {
                     if self.#name != Some(1.0) {
                         return true;
                     }
@@ -418,7 +416,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
             }
             FieldKind::Default(def) => {
                 ser.extend(quote! {
-                    if self.#name.should_serialize() {
+                    if self.#name != #def && self.#name.should_serialize() {
                         write!(out, #ser_lit)?;
                         self.#name.serialize(out)?;
                         write!(out, "\r\n")?;
@@ -431,7 +429,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                         writeln!(out)?;
                     }
                 });
-                chk_compact.extend(quote! {
+                chk.extend(quote! {
                     if self.#name != #def && self.#name.should_serialize() {
                         return true;
                     }
@@ -465,7 +463,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                         writeln!(out)?;
                     }
                 });
-                chk_compact.extend(quote! {
+                chk.extend(quote! {
                     if !self.#name.is_empty() {
                         return true;
                     }
@@ -476,7 +474,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
             }
             FieldKind::Mania(def, None) => {
                 ser.extend(quote! {
-                    if self.#name.should_serialize_box() {
+                    if self.#name.should_serialize_box() && self.#name.iter().any(|x| *x != #def) {
                         write!(out, #ser_lit)?;
                         self.#name.serialize_box(out)?;
                         write!(out, "\r\n")?;
@@ -489,7 +487,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                         writeln!(out)?;
                     }
                 });
-                chk_compact.extend(quote! {
+                chk.extend(quote! {
                     if self.#name.should_serialize_box() && self.#name.iter().any(|x| *x != #def) {
                         return true;
                     }
@@ -511,7 +509,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                 .into_token_stream();
                 ser.extend(quote! {
                     for (i, x) in self.#name.iter().enumerate() {
-                        if x.should_serialize() {
+                        if *x != #def && x.should_serialize() {
                             write!(out, #ser_lit_mania, i + 1)?;
                             x.serialize(out)?;
                             write!(out, "\r\n")?;
@@ -527,7 +525,7 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                         }
                     }
                 });
-                chk_compact.extend(quote! {
+                chk.extend(quote! {
                     if self.#name.iter().any(|x| *x != #def && x.should_serialize()) {
                         return true;
                     }
@@ -582,8 +580,8 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                     #ser_compact
                     Ok(())
                 }
-                fn should_write_compact(&self, version: Option<f64>) -> bool {
-                    #chk_compact
+                fn should_write(&self, version: Option<f64>) -> bool {
+                    #chk
                     false
                 }
             }
@@ -606,8 +604,8 @@ fn derive_skin_section2(input: TokenStream) -> TokenStream {
                     #ser_compact
                     Ok(())
                 }
-                fn should_write_compact(&self, version: Option<f64>) -> bool {
-                    #chk_compact
+                fn should_write(&self, version: Option<f64>) -> bool {
+                    #chk
                     false
                 }
             }

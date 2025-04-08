@@ -3,7 +3,7 @@
 use crate::{
     error::{
         CharEnumParseError, EnumParseError, IntEnumParseError, InvalidColour, InvalidEvent,
-        InvalidEventCommand, InvalidRecordField, ParseError, RecordParseError, Span,
+        InvalidEventCommand, InvalidRecordField, ParseError, ReadError, RecordParseError, Span,
     },
     parsers::beatmap::ParseField,
     util::{Borrowed, Lended, StaticCow},
@@ -28,8 +28,6 @@ pub trait BeatmapSection<'a> {
         line: impl StaticCow<'a>,
     ) -> Result<Option<Section>, ParseError>;
 }
-
-use thiserror::Error;
 
 pub type Colour = (u8, u8, u8);
 
@@ -1316,22 +1314,6 @@ impl<'a> HitObject<'a> {
             & HitObjectFlags::from_bits_retain(self.combo_colour_skip << 4);
         ret
     }
-}
-
-#[derive(Debug, Error)]
-pub enum ReadError {
-    #[error("{0}")]
-    Io(
-        #[from]
-        #[source]
-        io::Error,
-    ),
-    #[error("{0}")]
-    Parse(
-        #[from]
-        #[source]
-        ParseError,
-    ),
 }
 
 impl<'a> BeatmapSection<'a> for () {

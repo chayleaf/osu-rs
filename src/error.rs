@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, io};
 
 use thiserror::Error;
 
@@ -12,8 +12,8 @@ impl Span {
     pub fn new(start: u64, end: u64) -> Self {
         Self { start, end }
     }
-    pub fn into_range(self) -> std::ops::Range<u64> {
-        self.start..self.end
+    pub fn into_usize_range(self) -> std::ops::Range<usize> {
+        self.start as usize..self.end as usize
     }
 }
 
@@ -312,4 +312,20 @@ impl std::fmt::Display for ParseError {
         f.write_str(": ")?;
         self.reason.fmt(f)
     }
+}
+
+#[derive(Debug, Error)]
+pub enum ReadError {
+    #[error("{0}")]
+    Io(
+        #[from]
+        #[source]
+        io::Error,
+    ),
+    #[error("{0}")]
+    Parse(
+        #[from]
+        #[source]
+        ParseError,
+    ),
 }

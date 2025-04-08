@@ -29,7 +29,7 @@ macro_rules! impl_parse_field {
                 _ctx: &Context,
                 line: impl StaticCow<'a>,
             ) -> Result<Self, ParseError> {
-                line.as_ref().parse().map_err(ParseError::curry(name, line.span()))
+                line.as_ref().trim().parse().map_err(ParseError::curry(name, line.span()))
             }
         })*
     };

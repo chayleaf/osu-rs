@@ -1,7 +1,9 @@
 use std::{borrow::Cow, io};
 
 use crate::{
-    error::{InvalidColour, ParseError}, skin::{ManiaNoteBodyStyle, ManiaSpecialStyle, SliderStyle}, util::StaticCow
+    error::{InvalidColour, ParseError},
+    skin::{ManiaNoteBodyStyle, ManiaSpecialStyle, SliderStyle},
+    util::StaticCow,
 };
 
 pub trait SerializeField {
@@ -58,7 +60,7 @@ macro_rules! impl_field {
                 name: impl Into<Cow<'static, str>>,
                 line: impl StaticCow<'a>,
             ) -> Result<Self, ParseError> {
-                line.as_ref().parse().map_err(ParseError::curry(name, line.span()))
+                line.as_ref().trim().parse().map_err(ParseError::curry(name, line.span()))
             }
         }
         impl SerializeField for $T {
@@ -126,13 +128,6 @@ impl<'a> ParseField<'a> for bool {
 }
 
 impl SerializeField for bool {
-    fn serialize(&self, out: &mut impl io::Write) -> io::Result<()> {
-        if *self {
-            write!(out, "true")
-        } else {
-            write!(out, "false")
-        }
-    }
     fn serialize_compact(&self, out: &mut impl io::Write) -> io::Result<()> {
         if *self {
             write!(out, "1")

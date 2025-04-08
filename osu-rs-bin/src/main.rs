@@ -2,23 +2,23 @@ use std::{os::unix::ffi::OsStrExt, path::Path};
 
 use ariadne::{Label, Report, ReportKind, Source};
 
-fn read_beatmap(filename: impl AsRef<Path>) -> osu_rs::Beatmap<'static> {
+fn read_beatmap(filename: impl AsRef<Path>) -> osu_rs::beatmap::Beatmap<'static> {
     let file = std::fs::File::open(&filename).expect("file open error");
     let reader = std::io::BufReader::new(file);
-    match osu_rs::Beatmap::parse_file(reader) {
+    match osu_rs::beatmap::Beatmap::parse_file(reader) {
         Ok(beatmap) => beatmap,
         Err(err) => {
             let err = match err {
-                osu_rs::ReadError::Io(err) => panic!("io error: {err}"),
-                osu_rs::ReadError::Parse(x) => x,
+                osu_rs::error::ReadError::Io(err) => panic!("io error: {err}"),
+                osu_rs::error::ReadError::Parse(x) => x,
             };
             let text = std::fs::read_to_string(&filename).unwrap();
 
             let filename = "";
-            Report::build(ReportKind::Error, (filename, err.span.into_range()))
+            Report::build(ReportKind::Error, (filename, err.span.into_usize_range()))
                 .with_message(format!("failed to parse {}", err.field))
                 .with_label(
-                    Label::new((filename, err.span.into_range()))
+                    Label::new((filename, err.span.into_usize_range()))
                         .with_message(format!("{}", err.reason)),
                 )
                 .finish()
@@ -29,19 +29,46 @@ fn read_beatmap(filename: impl AsRef<Path>) -> osu_rs::Beatmap<'static> {
     }
 }
 
-fn parse_beatmap(text: &str) -> osu_rs::Beatmap {
-    match osu_rs::Beatmap::parse_str(text) {
+fn parse_beatmap(text: &str) -> osu_rs::beatmap::Beatmap {
+    match osu_rs::beatmap::Beatmap::parse_str(text) {
         Ok(beatmap) => beatmap,
         Err(err) => {
             let filename = "";
-            Report::build(ReportKind::Error, (filename, err.span.into_range()))
+            Report::build(ReportKind::Error, (filename, err.span.into_usize_range()))
                 .with_message(format!("failed to parse {}", err.field))
                 .with_label(
-                    Label::new((filename, err.span.into_range()))
+                    Label::new((filename, err.span.into_usize_range()))
                         .with_message(format!("{}", err.reason)),
                 )
                 .finish()
                 .print((filename, Source::from(text)))
+                .unwrap();
+            std::process::exit(1);
+        }
+    }
+}
+
+fn read_skin(filename: impl AsRef<Path>) -> osu_rs::skin::SkinIni<'static> {
+    let file = std::fs::File::open(&filename).expect("file open error");
+    let reader = std::io::BufReader::new(file);
+    match osu_rs::skin::SkinIni::parse_file(reader, osu_rs::skin::ParseStrictness::IgnoreErrors) {
+        Ok(x) => x,
+        Err(err) => {
+            let err = match err {
+                osu_rs::error::ReadError::Io(err) => panic!("io error: {err}"),
+                osu_rs::error::ReadError::Parse(x) => x,
+            };
+            let text = std::fs::read_to_string(&filename).unwrap();
+
+            let filename = "";
+            Report::build(ReportKind::Error, (filename, err.span.into_usize_range()))
+                .with_message(format!("failed to parse {}", err.field))
+                .with_label(
+                    Label::new((filename, err.span.into_usize_range()))
+                        .with_message(format!("{}", err.reason)),
+                )
+                .finish()
+                .print((filename, Source::from(text.as_str())))
                 .unwrap();
             std::process::exit(1);
         }
@@ -55,6 +82,16 @@ fn main() {
             let filename = std::env::args_os().nth(2).expect("expected filename");
             let bm = read_beatmap(filename);
             println!("{bm:#?}");
+        }
+        "skin-compact" => {
+            let filename = std::env::args_os().nth(2).expect("expected filename");
+            let skin = read_skin(filename);
+            skin.serialize_compact(std::io::stdout().lock()).unwrap();
+        }
+        "skin" => {
+            let filename = std::env::args_os().nth(2).expect("expected filename");
+            let skin = read_skin(filename);
+            skin.serialize(std::io::stdout().lock()).unwrap();
         }
         "write" => {
             let filename = std::env::args_os().nth(2).expect("expected filename");
@@ -130,7 +167,7 @@ fn main() {
             names.sort();
             let merged = names
                 .into_iter()
-                .fold(None::<osu_rs::Beatmap<'static>>, |old, new| {
+                .fold(None::<osu_rs::beatmap::Beatmap<'static>>, |old, new| {
                     let mut new = read_beatmap(new);
                     if let Some(mut old) = old {
                         assert!(

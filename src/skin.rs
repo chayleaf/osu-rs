@@ -8,10 +8,9 @@ use std::{
 use osu_rs_derive::{SkinEnum, SkinSection};
 
 use crate::{
-    beatmap::ReadError,
     error::{
-        EnumParseError, IntEnumParseError, MissingKeycountError, ParseError, RecordParseError,
-        Span, UnknownSectionName,
+        EnumParseError, IntEnumParseError, MissingKeycountError, ParseError, ReadError,
+        RecordParseError, Span, UnknownSectionName,
     },
     parsers::skin::{ParseField, ParseFieldInPlace, SerializeBox, SerializeField},
     util::{Borrowed, Lended, StaticCow},
@@ -51,6 +50,9 @@ pub struct General<'a> {
     pub name: Cow<'a, str>,
     #[default(Cow::Borrowed(""))]
     pub author: Cow<'a, str>,
+    /// Latest version if None
+    #[version]
+    pub version: Option<f64>,
     #[default(false)]
     pub slider_ball_flip: bool,
     #[default(true)]
@@ -84,9 +86,6 @@ pub struct General<'a> {
     pub combo_burst_random: bool,
     #[default(SliderStyle::MmSliders)]
     pub slider_style: SliderStyle,
-    /// Latest version if None
-    #[version]
-    pub version: Option<f64>,
 }
 
 #[derive(SkinSection, Clone, Debug, PartialEq)]
@@ -594,24 +593,25 @@ impl<'a> SkinIni<'a> {
         } = self;
         let mut out = io::BufWriter::new(out);
         general.serialize_compact(&mut out, general.version)?;
-        if colours.should_write_compact(general.version) {
-            writeln!(out, "[Colours")?;
+        // XXX: normally [Colours would be enough, but lazer doesn't support it
+        if colours.should_write(general.version) {
+            writeln!(out, "[Colours]")?;
             colours.serialize_compact(&mut out, general.version)?;
         }
-        if fonts.should_write_compact(general.version) {
-            writeln!(out, "[Fonts")?;
+        if fonts.should_write(general.version) {
+            writeln!(out, "[Fonts]")?;
             fonts.serialize_compact(&mut out, general.version)?;
         }
-        if catch_the_beat.should_write_compact(general.version) {
-            writeln!(out, "[CatchTheBeat")?;
+        if catch_the_beat.should_write(general.version) {
+            writeln!(out, "[CatchTheBeat]")?;
             catch_the_beat.serialize_compact(&mut out, general.version)?;
         }
         let mut encountered = [false; 19];
         for mania in mania {
             let skip = encountered[mania.keys as usize];
             encountered[mania.keys as usize] = true;
-            if !skip && mania.should_write_compact(general.version) {
-                writeln!(out, "[Mania")?;
+            if !skip && mania.should_write(general.version) {
+                writeln!(out, "[Mania]")?;
                 mania.serialize_compact(&mut out, general.version)?;
             }
         }
@@ -628,12 +628,18 @@ impl<'a> SkinIni<'a> {
         let mut out = io::BufWriter::new(out);
         write!(out, "[General]\r\n")?;
         general.serialize(&mut out, general.version)?;
-        write!(out, "\r\n[Colours]\r\n")?;
-        colours.serialize(&mut out, general.version)?;
-        write!(out, "\r\n[Fonts]\r\n")?;
-        fonts.serialize(&mut out, general.version)?;
-        write!(out, "\r\n[CatchTheBeat]\r\n")?;
-        catch_the_beat.serialize(&mut out, general.version)?;
+        if colours.should_write(general.version) {
+            write!(out, "\r\n[Colours]\r\n")?;
+            colours.serialize(&mut out, general.version)?;
+        }
+        if fonts.should_write(general.version) {
+            write!(out, "\r\n[Fonts]\r\n")?;
+            fonts.serialize(&mut out, general.version)?;
+        }
+        if catch_the_beat.should_write(general.version) {
+            write!(out, "\r\n[CatchTheBeat]\r\n")?;
+            catch_the_beat.serialize(&mut out, general.version)?;
+        }
         for mania in mania {
             write!(out, "\r\n[Mania]\r\n")?;
             mania.serialize(&mut out, general.version)?;
